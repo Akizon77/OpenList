@@ -2,10 +2,10 @@ package search
 
 import (
 	"context"
+	"fmt"
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -16,8 +16,6 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/search/searcher"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
-	"github.com/OpenListTeam/OpenList/v4/pkg/mq"
-	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	mapset "github.com/deckarep/golang-set/v2"
 	log "github.com/sirupsen/logrus"
 )
@@ -31,11 +29,6 @@ func Running() bool {
 }
 
 func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth int, count bool) error {
-	var (
-		err      error
-		objCount uint64 = 0
-		fi       model.Obj
-	)
 	log.Infof("build index for: %+v", indexPaths)
 	log.Infof("ignore paths: %+v", ignorePaths)
 	quit := make(chan struct{}, 1)
@@ -43,102 +36,40 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		// other goroutine is running
 		return errs.BuildIndexIsRunning
 	}
-	var (
-		indexMQ = mq.NewInMemoryMQ[ObjWithParent]()
-		running = atomic.Bool{} // current goroutine running
-		wg      = &sync.WaitGroup{}
-	)
-	running.Store(true)
-	wg.Add(1)
-	go func() {
-		ticker := time.NewTicker(time.Second)
-		defer func() {
-			Quit.Store(nil)
-			wg.Done()
-			// notify walk to exit when StopIndex api called
-			running.Store(false)
-			ticker.Stop()
-		}()
-		tickCount := 0
-		for {
-			select {
-			case <-ticker.C:
-				tickCount += 1
-				if indexMQ.Len() < 1000 && tickCount != 5 {
-					continue
-				} else if tickCount >= 5 {
-					tickCount = 0
-				}
-				log.Infof("index obj count: %d", objCount)
-				indexMQ.ConsumeAll(func(messages []mq.Message[ObjWithParent]) {
-					if len(messages) != 0 {
-						log.Debugf("current index: %s", messages[len(messages)-1].Content.Parent)
-					}
-					if err = BatchIndex(ctx, utils.MustSliceConvert(messages,
-						func(src mq.Message[ObjWithParent]) ObjWithParent {
-							return src.Content
-						})); err != nil {
-						log.Errorf("build index in batch error: %+v", err)
-					} else {
-						objCount = objCount + uint64(len(messages))
-					}
-					if count {
-						WriteProgress(&model.IndexProgress{
-							ObjCount:     objCount,
-							IsDone:       false,
-							LastDoneTime: nil,
-						})
-					}
-				})
-
-			case <-quit:
-				log.Debugf("build index for %+v received quit", indexPaths)
-				eMsg := ""
-				now := time.Now()
-				originErr := err
-				indexMQ.ConsumeAll(func(messages []mq.Message[ObjWithParent]) {
-					if err = BatchIndex(ctx, utils.MustSliceConvert(messages,
-						func(src mq.Message[ObjWithParent]) ObjWithParent {
-							return src.Content
-						})); err != nil {
-						log.Errorf("build index in batch error: %+v", err)
-					} else {
-						objCount = objCount + uint64(len(messages))
-					}
-					if originErr != nil {
-						log.Errorf("build index error: %+v", originErr)
-						eMsg = originErr.Error()
-					} else {
-						log.Infof("success build index, count: %d", objCount)
-					}
-					if count {
-						WriteProgress(&model.IndexProgress{
-							ObjCount:     objCount,
-							IsDone:       true,
-							LastDoneTime: &now,
-							Error:        eMsg,
-						})
-					}
-				})
-				log.Debugf("build index for %+v quit success", indexPaths)
-				return
-			}
-		}
-	}()
+	stopped := atomic.Bool{}
 	defer func() {
-		if !running.Load() || Quit.Load() != &quit {
-			log.Debugf("build index for %+v stopped by StopIndex", indexPaths)
-			return
+		Quit.Store(nil)
+	}()
+	stopRequested := func() bool {
+		if stopped.Load() {
+			return true
 		}
 		select {
-		// avoid goroutine leak
-		case quit <- struct{}{}:
+		case <-quit:
+			stopped.Store(true)
+			return true
 		default:
+			return false
 		}
-		wg.Wait()
-	}()
+	}
+	finish := func(objCount uint64, err error) {
+		if !count {
+			return
+		}
+		now := time.Now()
+		progress := &model.IndexProgress{
+			ObjCount:     objCount,
+			IsDone:       true,
+			LastDoneTime: &now,
+		}
+		if err != nil {
+			progress.Error = err.Error()
+		}
+		WriteProgress(progress)
+	}
 	admin, err := op.GetAdmin()
 	if err != nil {
+		finish(0, err)
 		return err
 	}
 	if count {
@@ -147,9 +78,10 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			IsDone:   false,
 		})
 	}
+	staged := make([]ObjWithParent, 0)
 	for _, indexPath := range indexPaths {
 		walkFn := func(indexPath string, info model.Obj) error {
-			if !running.Load() {
+			if stopRequested() {
 				return filepath.SkipDir
 			}
 			for _, avoidPath := range ignorePaths {
@@ -166,24 +98,53 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			if indexPath == "/" {
 				return nil
 			}
-			indexMQ.Publish(mq.Message[ObjWithParent]{
-				Content: ObjWithParent{
-					Obj:    info,
-					Parent: path.Dir(indexPath),
-				},
+			staged = append(staged, ObjWithParent{
+				Obj:    info,
+				Parent: path.Dir(indexPath),
 			})
 			return nil
 		}
-		fi, err = fs.Get(ctx, indexPath, &fs.GetArgs{})
+		fi, err := fs.Get(ctx, indexPath, &fs.GetArgs{})
 		if err != nil {
+			finish(0, err)
 			return err
 		}
 		// TODO: run walkFS concurrently
 		err = fs.WalkFS(context.WithValue(ctx, conf.UserKey, admin), maxDepth, indexPath, fi, walkFn)
 		if err != nil {
+			finish(0, err)
+			return err
+		}
+		if stopRequested() {
+			err = fmt.Errorf("index build stopped")
+			finish(0, err)
 			return err
 		}
 	}
+	if count {
+		if err = Clear(ctx); err != nil {
+			finish(0, err)
+			return err
+		}
+	}
+	for start := 0; start < len(staged); start += searchBatchSize {
+		end := start + searchBatchSize
+		if end > len(staged) {
+			end = len(staged)
+		}
+		if err = BatchIndex(ctx, staged[start:end]); err != nil {
+			finish(uint64(start), err)
+			return err
+		}
+		if count {
+			WriteProgress(&model.IndexProgress{
+				ObjCount: uint64(end),
+				IsDone:   false,
+			})
+		}
+	}
+	log.Infof("success build index, count: %d", len(staged))
+	finish(uint64(len(staged)), nil)
 	return nil
 }
 

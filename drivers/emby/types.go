@@ -14,7 +14,7 @@ type authResp struct {
 
 type listResp struct {
 	Items            []embyItem `json:"Items"`
-	TotalRecordCount int        `json:"TotalRecordCount"`
+	TotalRecordCount *int       `json:"TotalRecordCount"`
 }
 
 type embyItem struct {
@@ -31,6 +31,7 @@ type embyItem struct {
 }
 
 type itemDetailResp struct {
+	MediaType    string            `json:"MediaType"`
 	MediaSources []embyMediaSource `json:"MediaSources"`
 }
 

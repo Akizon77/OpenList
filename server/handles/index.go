@@ -25,13 +25,7 @@ func BuildIndex(c *gin.Context) {
 		return
 	}
 	go func() {
-		ctx := context.Background()
-		err := search.Clear(ctx)
-		if err != nil {
-			log.Errorf("clear index error: %+v", err)
-			return
-		}
-		err = search.BuildIndex(context.Background(), []string{"/"},
+		err := search.BuildIndex(context.Background(), []string{"/"},
 			conf.SlicesMap[conf.IgnorePaths], setting.GetInt(conf.MaxIndexDepth, 20), true)
 		if err != nil {
 			log.Errorf("build index error: %+v", err)
