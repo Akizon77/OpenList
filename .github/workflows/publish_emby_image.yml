@@ -4,8 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag (like v0.1.0). Also pushes a "latest" tag.'
+        description: 'Version tag (like v4.2.6). Also pushes a "latest" tag.'
         required: true
+        type: string
+      frontend_tag:
+        description: 'Frontend dist tag (like v4.2.6). Defaults to the latest OpenList-Frontend release.'
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -15,12 +20,12 @@ env:
   GHCR_ORG_NAME: akizon77
   IMAGE_NAME: openlist-git
   REGISTRY: ghcr.io
-  ARTIFACT_NAME: 'binaries_docker_release'
   PLATFORMS: 'linux/amd64'
+  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || 'OpenListTeam/OpenList-Frontend' }}
 
 jobs:
-  build_binary:
-    name: Build Binaries for Docker Release
+  release_docker:
+    name: Build and publish Docker image to GHCR
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,46 +35,47 @@ jobs:
         with:
           go-version: '1.27.1'
 
-      - name: Cache Musl
-        id: cache-musl
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: build/musl-libs
-          key: docker-musl-libs-v2
+      - name: Fetch frontend dist
+        id: fetch-frontend
+        run: |
+          set -eu
+          if [ -n "${{ github.event.inputs.frontend_tag }}" ]; then
+            tag="${{ github.event.inputs.frontend_tag }}"
+          else
+            tag="$(curl -fsSL -H 'Accept: application/vnd.github.v3+json' "https://api.github.com/repos/${{ env.FRONTEND_REPO }}/releases/latest" | grep '"tag_name"' | head -n 1 | cut -d'"' -f4)"
+          fi
+          if [ -z "$tag" ]; then
+            echo "error: failed to resolve frontend tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "fetching frontend dist $tag from ${{ env.FRONTEND_REPO }}"
+          asset_url="$(curl -fsSL -H 'Accept: application/vnd.github.v3+json' "https://api.github.com/repos/${{ env.FRONTEND_REPO }}/releases/tags/$tag" | jq -r '.assets[].browser_download_url' | grep 'openlist-frontend-dist' | grep -v 'lite' | grep '\.tar\.gz$' | head -n 1)"
+          if [ -z "$asset_url" ] || [ "$asset_url" = 'null' ]; then
+            echo "error: frontend dist asset not found for tag $tag" >&2
+            exit 1
+          fi
+          curl -fsSL "$asset_url" -o dist.tar.gz
+          rm -rf public/dist && mkdir -p public/dist
+          tar -xzf dist.tar.gz -C public/dist
+          rm -f dist.tar.gz
+          echo "frontend version: $(cat public/dist/VERSION)"
 
-      - name: Download Musl Library
-        if: steps.cache-musl.outputs.cache-hit != 'true'
-        run: bash build.sh prepare docker-multiplatform
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build go binary (release)
-        run: bash build.sh release docker-multiplatform
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          FRONTEND_REPO: ${{ vars.FRONTEND_REPO }}
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          overwrite: true
-          path: |
-            build/
-            !build/*.tgz
-            !build/musl-libs/**
-
-  release_docker:
-    needs: build_binary
-    name: Publish Docker image to GHCR
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: 'build/'
+      - name: Build go binary (linux/amd64)
+        run: |
+          set -eu
+          built_at="$(date +'%F %T %z')"
+          git_commit="$(git log --pretty=format:%h -1)"
+          version="${{ github.event.inputs.tag }}"
+          web_version="${{ steps.fetch-frontend.outputs.tag }}"
+          ldflags="-w -s \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.GitCommit=$git_commit' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.Version=$version' \
+            -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.WebVersion=$web_version'"
+          mkdir -p build/linux/amd64
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o build/linux/amd64/openlist -ldflags="$ldflags" -tags=jsoniter .
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
@@ -97,6 +103,8 @@ jobs:
           context: .
           file: Dockerfile.ci
           push: true
+          build-args: |
+            BASE_IMAGE_TAG=base
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: ${{ env.PLATFORMS }}
