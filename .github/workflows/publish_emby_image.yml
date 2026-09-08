@@ -80,9 +80,13 @@ jobs:
         working-directory: frontend
         run: |
           set -eu
-          pnpm install --frozen-lockfile
-          node ./scripts/i18n.mjs
-          pnpm build
+          chmod +x build.sh
+          ./build.sh --dev --no-compress --skip-i18n
+          language_count="$(find src/lang -mindepth 1 -maxdepth 1 -type d | wc -l)"
+          if [ "$language_count" -le 1 ]; then
+            echo "error: translated language packs were not prepared" >&2
+            exit 1
+          fi
           printf '%s' "${{ steps.build-meta.outputs.web_version }}" > dist/VERSION
 
       - name: Prepare embedded frontend
