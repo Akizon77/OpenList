@@ -49,18 +49,10 @@ func UpdateIndex(c *gin.Context) {
 		return
 	}
 	go func() {
-		ctx := context.Background()
 		progress, err := search.Progress()
 		if err != nil {
 			log.Errorf("get index progress error: %+v", err)
 			progress = &model.IndexProgress{}
-		}
-		for _, path := range req.Paths {
-			err = search.Del(ctx, path)
-			if err != nil {
-				log.Errorf("delete index on %s error: %+v", path, err)
-				return
-			}
 		}
 		err = search.BuildIndex(context.Background(), req.Paths,
 			conf.SlicesMap[conf.IgnorePaths], req.MaxDepth, false)

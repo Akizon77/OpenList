@@ -100,12 +100,12 @@ func (d *Emby) getItems(ctx context.Context, parentID string) ([]embyItem, error
 		}
 
 		if page.TotalRecordCount == nil {
-			if len(page.Items) == 0 {
-				return items, nil
-			}
 			return nil, fmt.Errorf("emby list response missing total record count at start index %d", startIndex)
 		}
 		totalRecordCount := *page.TotalRecordCount
+		if totalRecordCount < 0 {
+			return nil, fmt.Errorf("emby list response reported negative total record count %d", totalRecordCount)
+		}
 		if totalRecordCount < startIndex+len(page.Items) {
 			return nil, fmt.Errorf("emby list response reported total record count %d below returned range ending at %d", totalRecordCount, startIndex+len(page.Items))
 		}
@@ -125,6 +125,12 @@ func (d *Emby) getViews(ctx context.Context) ([]embyItem, error) {
 	var data listResp
 	if err := d.getJSON(ctx, "/Users/"+userID+"/Views", nil, &data, "views"); err != nil {
 		return nil, err
+	}
+	if data.TotalRecordCount == nil {
+		return nil, fmt.Errorf("emby views response missing total record count")
+	}
+	if *data.TotalRecordCount != len(data.Items) {
+		return nil, fmt.Errorf("emby views response reported total record count %d but returned %d items", *data.TotalRecordCount, len(data.Items))
 	}
 	return data.Items, nil
 }

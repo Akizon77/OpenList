@@ -121,10 +121,17 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			return err
 		}
 	}
+	// Replace existing entries only after every storage walk has succeeded.
 	if count {
 		if err = Clear(ctx); err != nil {
 			finish(0, err)
 			return err
+		}
+	} else {
+		for _, indexPath := range indexPaths {
+			if err = Del(ctx, indexPath); err != nil {
+				return fmt.Errorf("delete old index on %s: %w", indexPath, err)
+			}
 		}
 	}
 	for start := 0; start < len(staged); start += searchBatchSize {
