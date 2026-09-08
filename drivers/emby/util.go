@@ -204,7 +204,7 @@ func (d *Emby) getItemDetail(ctx context.Context, fileID string) (*itemDetailRes
 	_, userID := d.auth()
 	var detail itemDetailResp
 	query := url.Values{}
-	query.Set("Fields", "MediaSources,MediaType")
+	query.Set("Fields", "MediaSources,MediaType,RunTimeTicks")
 	if err := d.getJSON(ctx, "/Users/"+userID+"/Items/"+fileID, query, &detail, "item detail"); err != nil {
 		return nil, err
 	}
@@ -212,8 +212,16 @@ func (d *Emby) getItemDetail(ctx context.Context, fileID string) (*itemDetailRes
 }
 
 func (d *Emby) getJSON(ctx context.Context, endpoint string, query url.Values, out any, action string) error {
+	return d.requestJSON(ctx, http.MethodGet, endpoint, query, nil, out, action, "openlist-emby")
+}
+
+func (d *Emby) postJSONWithDevice(ctx context.Context, endpoint string, query url.Values, payload, out any, action, deviceID string) error {
+	return d.requestJSON(ctx, http.MethodPost, endpoint, query, payload, out, action, deviceID)
+}
+
+func (d *Emby) requestJSON(ctx context.Context, method, endpoint string, query url.Values, payload, out any, action, deviceID string) error {
 	token, _ := d.auth()
-	err := d.doGetJSON(ctx, endpoint, query, token, out, action)
+	err := d.doJSONRequest(ctx, method, endpoint, query, payload, token, out, action, deviceID)
 	if err == nil {
 		return nil
 	}
@@ -226,10 +234,10 @@ func (d *Emby) getJSON(ctx context.Context, endpoint string, query url.Values, o
 		return err
 	}
 	newToken, _ := d.auth()
-	return d.doGetJSON(ctx, endpoint, query, newToken, out, action)
+	return d.doJSONRequest(ctx, method, endpoint, query, payload, newToken, out, action, deviceID)
 }
 
-func (d *Emby) doGetJSON(ctx context.Context, endpoint string, query url.Values, token string, out any, action string) error {
+func (d *Emby) doJSONRequest(ctx context.Context, method, endpoint string, query url.Values, payload any, token string, out any, action, deviceID string) error {
 	u, err := url.Parse(d.URL + endpoint)
 	if err != nil {
 		return err
@@ -247,13 +255,24 @@ func (d *Emby) doGetJSON(ctx context.Context, endpoint string, query url.Values,
 	if encodedQuery := query.Encode(); encodedQuery != "" {
 		target += "?" + encodedQuery
 	}
+	var requestBody []byte
+	if payload != nil {
+		requestBody, err = json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("encode emby %s request: %w", action, err)
+		}
+	}
 
 	var lastErr error
 	for attempt := 1; attempt <= embyMaxAttempts; attempt++ {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		req, err := http.NewRequestWithContext(ctx, method, u.String(), bytes.NewReader(requestBody))
 		if err != nil {
 			return err
 		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="OpenList", Device="OpenList Web", DeviceId="%s", Version="1.0.0"`, normalizeEmbyDeviceID(deviceID)))
 		resp, err := d.client.Do(req)
 		if err != nil {
 			lastErr = &embyHTTPError{
@@ -292,6 +311,8 @@ func (d *Emby) doGetJSON(ctx context.Context, endpoint string, query url.Values,
 					return httpErr
 				}
 				lastErr = httpErr
+			} else if out == nil {
+				return nil
 			} else if !json.Valid(body) {
 				lastErr = &embyHTTPError{
 					action:      action,
