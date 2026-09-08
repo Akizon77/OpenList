@@ -1,4 +1,4 @@
-name: Publish Emby Image
+name: Publish Akizon77 Docker Image
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ permissions:
 
 env:
   GHCR_ORG_NAME: akizon77
-  IMAGE_NAME: openlist-git
+  IMAGE_NAME: openlist
   REGISTRY: ghcr.io
   PLATFORMS: 'linux/amd64'
   FRONTEND_REPO: ${{ vars.FRONTEND_REPO || 'OpenListTeam/OpenList-Frontend' }}
