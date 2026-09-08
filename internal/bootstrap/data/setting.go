@@ -194,6 +194,7 @@ func InitialSettings() []model.SettingItem {
 		{Key: conf.AutoUpdateIndex, Value: "false", Type: conf.TypeBool, Group: model.INDEX},
 		{Key: conf.IgnorePaths, Value: "", Type: conf.TypeText, Group: model.INDEX, Flag: model.PRIVATE, Help: `one path per line`},
 		{Key: conf.MaxIndexDepth, Value: "20", Type: conf.TypeNumber, Group: model.INDEX, Flag: model.PRIVATE, Help: `max depth of index`},
+		{Key: conf.IndexRequestRateLimit, Value: "0", Type: conf.TypeNumber, Group: model.INDEX, Flag: model.PRIVATE, Help: `maximum storage API requests per second for one index task; 0 means unlimited`},
 		{Key: conf.IndexProgress, Value: "{}", Type: conf.TypeText, Group: model.SINGLE, Flag: model.PRIVATE},
 
 		// SSO settings

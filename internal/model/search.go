@@ -6,10 +6,12 @@ import (
 )
 
 type IndexProgress struct {
-	ObjCount     uint64     `json:"obj_count"`
-	IsDone       bool       `json:"is_done"`
-	LastDoneTime *time.Time `json:"last_done_time"`
-	Error        string     `json:"error"`
+	ObjCount        uint64     `json:"obj_count"`
+	ScannedCount    uint64     `json:"scanned_count"`
+	IsDone          bool       `json:"is_done"`
+	LastDoneTime    *time.Time `json:"last_done_time"`
+	LastAttemptTime *time.Time `json:"last_attempt_time"`
+	Error           string     `json:"error"`
 }
 
 type SearchReq struct {

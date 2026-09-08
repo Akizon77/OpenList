@@ -61,10 +61,11 @@ const (
 	IgnoreSystemFiles       = "ignore_system_files"
 
 	// index
-	SearchIndex     = "search_index"
-	AutoUpdateIndex = "auto_update_index"
-	IgnorePaths     = "ignore_paths"
-	MaxIndexDepth   = "max_index_depth"
+	SearchIndex           = "search_index"
+	AutoUpdateIndex       = "auto_update_index"
+	IgnorePaths           = "ignore_paths"
+	MaxIndexDepth         = "max_index_depth"
+	IndexRequestRateLimit = "index_request_rate_limit"
 
 	// aria2
 	Aria2Uri    = "aria2_uri"

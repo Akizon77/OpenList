@@ -29,6 +29,7 @@ func InitClient() {
 	).SetTLSClientConfig(&tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify})
 	NoRedirectClient.SetHeader("user-agent", UserAgent)
 	net.SetRestyProxyIfConfigured(NoRedirectClient)
+	addRequestRateLimitHook(NoRedirectClient)
 
 	RestyClient = NewRestyClient()
 	HttpClient = net.NewHttpClient()
@@ -43,5 +44,12 @@ func NewRestyClient() *resty.Client {
 		SetTLSClientConfig(&tls.Config{InsecureSkipVerify: conf.Conf.TlsInsecureSkipVerify})
 
 	net.SetRestyProxyIfConfigured(client)
+	addRequestRateLimitHook(client)
 	return client
+}
+
+func addRequestRateLimitHook(client *resty.Client) {
+	client.OnBeforeRequest(func(_ *resty.Client, request *resty.Request) error {
+		return net.WaitRequestRateLimit(request.Context())
+	})
 }

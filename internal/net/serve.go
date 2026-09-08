@@ -302,6 +302,9 @@ type safeTransport struct {
 }
 
 func (t *safeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if err := WaitRequestRateLimit(req.Context()); err != nil {
+		return nil, err
+	}
 	host := req.URL.Hostname()
 	addrs, err := gonet.DefaultResolver.LookupIPAddr(req.Context(), host)
 	if err != nil || len(addrs) == 0 {

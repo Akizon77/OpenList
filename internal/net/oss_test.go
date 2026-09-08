@@ -33,6 +33,11 @@ func TestNewOSSClientUsesEnvironmentHTTPSProxy(t *testing.T) {
 
 	transport, ok := client.HTTPClient.Transport.(*http.Transport)
 	if !ok {
+		if safe, wrapped := client.HTTPClient.Transport.(*safeTransport); wrapped {
+			transport, ok = safe.base.(*http.Transport)
+		}
+	}
+	if !ok {
 		t.Fatalf("expected *http.Transport, got %T", client.HTTPClient.Transport)
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/driver"
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	internalnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/stream"
 	"github.com/OpenListTeam/OpenList/v4/pkg/singleflight"
 	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
@@ -57,7 +58,11 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		if !dir.IsDir() {
 			return nil, errors.WithStack(errs.NotFolder)
 		}
-		files, err := storage.List(ctx, dir, args)
+		requestCtx, err := internalnet.AcquireRequestPermit(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for index request rate limit")
+		}
+		files, err := storage.List(requestCtx, dir, args)
 		if err != nil {
 			return nil, errors.Wrapf(err, "failed to list objs")
 		}
@@ -135,7 +140,11 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 	// is root folder
 	if path == "/" {
 		if getRooter, ok := storage.(driver.GetRooter); ok {
-			rootObj, err := getRooter.GetRoot(ctx)
+			requestCtx, err := internalnet.AcquireRequestPermit(ctx)
+			if err != nil {
+				return nil, errors.Wrap(err, "failed to wait for index request rate limit")
+			}
+			rootObj, err := getRooter.GetRoot(requestCtx)
 			if err != nil {
 				return nil, errors.WithMessage(err, "failed get root obj")
 			}
@@ -182,7 +191,11 @@ func Get(ctx context.Context, storage driver.Driver, path string, excludeTempObj
 
 	// get the obj directly without list so that we can reduce the io
 	if g, ok := storage.(driver.Getter); ok {
-		obj, err := g.Get(ctx, path)
+		requestCtx, err := internalnet.AcquireRequestPermit(ctx)
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to wait for index request rate limit")
+		}
+		obj, err := g.Get(requestCtx, path)
 		if err == nil {
 			return obj, nil
 		}

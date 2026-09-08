@@ -60,19 +60,23 @@ func UpdateIndex(c *gin.Context) {
 			log.Errorf("update index error: %+v", err)
 			now := time.Now()
 			search.WriteProgress(&model.IndexProgress{
-				ObjCount:     progress.ObjCount,
-				IsDone:       true,
-				LastDoneTime: &now,
-				Error:        err.Error(),
+				ObjCount:        progress.ObjCount,
+				ScannedCount:    0,
+				IsDone:          true,
+				LastDoneTime:    progress.LastDoneTime,
+				LastAttemptTime: &now,
+				Error:           err.Error(),
 			})
 			return
 		}
 		now := time.Now()
 		search.WriteProgress(&model.IndexProgress{
-			ObjCount:     progress.ObjCount,
-			IsDone:       true,
-			LastDoneTime: &now,
-			Error:        "",
+			ObjCount:        progress.ObjCount,
+			ScannedCount:    0,
+			IsDone:          true,
+			LastDoneTime:    &now,
+			LastAttemptTime: &now,
+			Error:           "",
 		})
 	}()
 	common.SuccessResp(c)
@@ -98,10 +102,12 @@ func ClearIndex(c *gin.Context) {
 	}
 	search.Clear(c)
 	search.WriteProgress(&model.IndexProgress{
-		ObjCount:     0,
-		IsDone:       true,
-		LastDoneTime: nil,
-		Error:        "",
+		ObjCount:        0,
+		ScannedCount:    0,
+		IsDone:          true,
+		LastDoneTime:    nil,
+		LastAttemptTime: nil,
+		Error:           "",
 	})
 	common.SuccessResp(c)
 }

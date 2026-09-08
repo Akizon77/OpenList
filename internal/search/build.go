@@ -13,6 +13,7 @@ import (
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/fs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	internalnet "github.com/OpenListTeam/OpenList/v4/internal/net"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
 	"github.com/OpenListTeam/OpenList/v4/internal/search/searcher"
 	"github.com/OpenListTeam/OpenList/v4/internal/setting"
@@ -28,44 +29,91 @@ func Running() bool {
 	return Quit.Load() != nil
 }
 
+func completedBuildProgress(previous *model.IndexProgress, indexedCount, scannedCount uint64, existingIndexPreserved bool, now time.Time, err error) *model.IndexProgress {
+	progress := &model.IndexProgress{
+		ObjCount:        indexedCount,
+		ScannedCount:    scannedCount,
+		IsDone:          true,
+		LastAttemptTime: &now,
+	}
+	if err == nil {
+		progress.LastDoneTime = &now
+		return progress
+	}
+
+	progress.Error = err.Error()
+	if previous != nil {
+		progress.LastDoneTime = previous.LastDoneTime
+		if existingIndexPreserved {
+			progress.ObjCount = previous.ObjCount
+		}
+	}
+	return progress
+}
+
 func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth int, count bool) error {
 	log.Infof("build index for: %+v", indexPaths)
 	log.Infof("ignore paths: %+v", ignorePaths)
+	requestRateLimit := setting.GetFloat(conf.IndexRequestRateLimit, 0)
+	ctx = internalnet.WithRequestRateLimit(ctx, requestRateLimit)
+	if requestRateLimit > 0 {
+		log.Infof("index request rate limit: %.2f requests/s", requestRateLimit)
+	}
 	quit := make(chan struct{}, 1)
 	if !Quit.CompareAndSwap(nil, &quit) {
 		// other goroutine is running
 		return errs.BuildIndexIsRunning
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	stopped := atomic.Bool{}
 	defer func() {
 		Quit.Store(nil)
 	}()
-	stopRequested := func() bool {
-		if stopped.Load() {
-			return true
-		}
+	go func() {
 		select {
 		case <-quit:
 			stopped.Store(true)
-			return true
-		default:
-			return false
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	stopRequested := func() bool {
+		return stopped.Load()
+	}
+	previousProgress := &model.IndexProgress{}
+	if count {
+		progress, err := Progress()
+		if err != nil {
+			log.Warnf("failed to read previous index progress: %+v", err)
+		} else {
+			previousProgress = progress
 		}
 	}
-	finish := func(objCount uint64, err error) {
+	var scannedCount uint64
+	existingIndexPreserved := true
+	lastProgressWrite := time.Time{}
+	writeRunningProgress := func(objCount uint64) {
 		if !count {
 			return
 		}
-		now := time.Now()
-		progress := &model.IndexProgress{
-			ObjCount:     objCount,
-			IsDone:       true,
-			LastDoneTime: &now,
+		WriteProgress(&model.IndexProgress{
+			ObjCount:        objCount,
+			ScannedCount:    scannedCount,
+			IsDone:          false,
+			LastDoneTime:    previousProgress.LastDoneTime,
+			LastAttemptTime: previousProgress.LastAttemptTime,
+		})
+		lastProgressWrite = time.Now()
+	}
+	finish := func(indexedCount uint64, err error) {
+		if !count {
+			return
 		}
+		WriteProgress(completedBuildProgress(previousProgress, indexedCount, scannedCount, existingIndexPreserved, time.Now(), err))
 		if err != nil {
-			progress.Error = err.Error()
+			log.Errorf("index build failed after scanning %d objects; existing index preserved: %t; error: %+v", scannedCount, existingIndexPreserved, err)
 		}
-		WriteProgress(progress)
 	}
 	admin, err := op.GetAdmin()
 	if err != nil {
@@ -73,10 +121,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		return err
 	}
 	if count {
-		WriteProgress(&model.IndexProgress{
-			ObjCount: 0,
-			IsDone:   false,
-		})
+		writeRunningProgress(previousProgress.ObjCount)
 	}
 	staged := make([]ObjWithParent, 0)
 	for _, indexPath := range indexPaths {
@@ -102,16 +147,30 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 				Obj:    info,
 				Parent: path.Dir(indexPath),
 			})
+			scannedCount++
+			if scannedCount%100 == 0 && time.Since(lastProgressWrite) >= time.Second {
+				writeRunningProgress(previousProgress.ObjCount)
+			}
 			return nil
 		}
 		fi, err := fs.Get(ctx, indexPath, &fs.GetArgs{})
 		if err != nil {
+			if stopRequested() {
+				err = fmt.Errorf("index build stopped")
+			} else {
+				err = fmt.Errorf("get index path %s: %w", indexPath, err)
+			}
 			finish(0, err)
 			return err
 		}
 		// TODO: run walkFS concurrently
 		err = fs.WalkFS(context.WithValue(ctx, conf.UserKey, admin), maxDepth, indexPath, fi, walkFn)
 		if err != nil {
+			if stopRequested() {
+				err = fmt.Errorf("index build stopped")
+			} else {
+				err = fmt.Errorf("walk index path %s: %w", indexPath, err)
+			}
 			finish(0, err)
 			return err
 		}
@@ -120,13 +179,16 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			finish(0, err)
 			return err
 		}
+		writeRunningProgress(previousProgress.ObjCount)
 	}
 	// Replace existing entries only after every storage walk has succeeded.
 	if count {
+		existingIndexPreserved = false
 		if err = Clear(ctx); err != nil {
 			finish(0, err)
 			return err
 		}
+		writeRunningProgress(0)
 	} else {
 		for _, indexPath := range indexPaths {
 			if err = Del(ctx, indexPath); err != nil {
@@ -143,12 +205,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			finish(uint64(start), err)
 			return err
 		}
-		if count {
-			WriteProgress(&model.IndexProgress{
-				ObjCount: uint64(end),
-				IsDone:   false,
-			})
-		}
+		writeRunningProgress(uint64(end))
 	}
 	log.Infof("success build index, count: %d", len(staged))
 	finish(uint64(len(staged)), nil)
