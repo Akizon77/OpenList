@@ -1,19 +1,23 @@
 name: Publish Akizon77 Docker Image
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       tag:
         description: 'Version tag (like v4.2.6). Also pushes a "latest" tag.'
         required: true
         type: string
-      frontend_tag:
-        description: 'Frontend dist tag (like v4.2.6). Defaults to the latest OpenList-Frontend release.'
+      frontend_ref:
+        description: 'Frontend git ref. Defaults to main.'
         required: false
-        default: ''
+        default: main
         type: string
 
 permissions:
+  contents: read
   packages: write
 
 env:
@@ -21,7 +25,8 @@ env:
   IMAGE_NAME: openlist
   REGISTRY: ghcr.io
   PLATFORMS: 'linux/amd64'
-  FRONTEND_REPO: ${{ vars.FRONTEND_REPO || 'OpenListTeam/OpenList-Frontend' }}
+  FRONTEND_REPO: Akizon77/OpenList-Frontend
+  FRONTEND_REF: ${{ github.event.inputs.frontend_ref || 'main' }}
 
 jobs:
   release_docker:
@@ -35,30 +40,58 @@ jobs:
         with:
           go-version: '1.27.1'
 
-      - name: Fetch frontend dist
-        id: fetch-frontend
+      - name: Checkout frontend
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ env.FRONTEND_REPO }}
+          ref: ${{ env.FRONTEND_REF }}
+          path: frontend
+          fetch-depth: 1
+
+      - name: Resolve build metadata
+        id: build-meta
         run: |
           set -eu
-          if [ -n "${{ github.event.inputs.frontend_tag }}" ]; then
-            tag="${{ github.event.inputs.frontend_tag }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ github.event.inputs.tag }}"
           else
-            tag="$(curl -fsSL -H 'Accept: application/vnd.github.v3+json' "https://api.github.com/repos/${{ env.FRONTEND_REPO }}/releases/latest" | grep '"tag_name"' | head -n 1 | cut -d'"' -f4)"
+            tag="main-${GITHUB_SHA::7}"
           fi
           if [ -z "$tag" ]; then
-            echo "error: failed to resolve frontend tag" >&2
+            echo "error: version tag is empty" >&2
             exit 1
           fi
+          frontend_commit="$(git -C frontend rev-parse --short HEAD)"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "fetching frontend dist $tag from ${{ env.FRONTEND_REPO }}"
-          asset_url="$(curl -fsSL -H 'Accept: application/vnd.github.v3+json' "https://api.github.com/repos/${{ env.FRONTEND_REPO }}/releases/tags/$tag" | jq -r '.assets[].browser_download_url' | grep 'openlist-frontend-dist' | grep -v 'lite' | grep '\.tar\.gz$' | head -n 1)"
-          if [ -z "$asset_url" ] || [ "$asset_url" = 'null' ]; then
-            echo "error: frontend dist asset not found for tag $tag" >&2
-            exit 1
-          fi
-          curl -fsSL "$asset_url" -o dist.tar.gz
-          rm -rf public/dist && mkdir -p public/dist
-          tar -xzf dist.tar.gz -C public/dist
-          rm -f dist.tar.gz
+          echo "web_version=main-${frontend_commit}" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 11.25.0
+          run_install: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '24.20.0'
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          set -eu
+          pnpm install --frozen-lockfile
+          node ./scripts/i18n.mjs
+          pnpm build
+          printf '%s' "${{ steps.build-meta.outputs.web_version }}" > dist/VERSION
+
+      - name: Prepare embedded frontend
+        run: |
+          set -eu
+          rm -rf public/dist
+          mkdir -p public/dist
+          cp -a frontend/dist/. public/dist/
+          test -f public/dist/index.html
           echo "frontend version: $(cat public/dist/VERSION)"
 
       - name: Build go binary (linux/amd64)
@@ -66,8 +99,8 @@ jobs:
           set -eu
           built_at="$(date +'%F %T %z')"
           git_commit="$(git log --pretty=format:%h -1)"
-          version="${{ github.event.inputs.tag }}"
-          web_version="${{ steps.fetch-frontend.outputs.tag }}"
+          version="${{ steps.build-meta.outputs.tag }}"
+          web_version="${{ steps.build-meta.outputs.web_version }}"
           ldflags="-w -s \
             -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.BuiltAt=$built_at' \
             -X 'github.com/OpenListTeam/OpenList/v4/internal/conf.GitAuthor=The OpenList Projects Contributors <noreply@openlist.team>' \
@@ -93,7 +126,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.GHCR_ORG_NAME }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.event.inputs.tag }}
+            type=raw,value=${{ steps.build-meta.outputs.tag }}
             type=raw,value=latest
 
       - name: Build and push
