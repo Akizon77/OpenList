@@ -64,7 +64,7 @@ func list(ctx context.Context, storage driver.Driver, path string, args model.Li
 		}
 		files, err := storage.List(requestCtx, dir, args)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to list objs")
+			return nil, errors.Wrapf(err, "failed to list objs from storage %q at %q", storage.GetStorage().MountPath, path)
 		}
 		// warp obj name
 		wrapObjsName(storage, files)

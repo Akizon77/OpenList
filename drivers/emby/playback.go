@@ -206,11 +206,17 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 
 	if mode != "external" {
 		bitrate := normalizeStreamingBitrate(req.MaxStreamingBitrate)
-		plan, planErr := d.getWebPlaybackInfo(ctx, itemID, deviceID, selectedSource.ID, selectedAudio, bitrate)
+		plan, planErr := d.getWebPlaybackInfo(ctx, itemID, deviceID, selectedSource.ID, selectedAudio, selectedSubtitle, bitrate)
 		if planErr != nil {
 			info.PlaybackError = planErr.Error()
 			log.WithError(planErr).Warnf("emby web playback plan failed for item %s; using direct stream", itemID)
 		} else if plannedSource := selectPlaybackSource(plan.MediaSources, selectedSource.ID); plannedSource != nil {
+			selectedMediaSource := getPlaybackMediaSource(info.MediaSources, selectedSource.ID)
+			if selectedMediaSource != nil {
+				if err := d.mergePlaybackMediaSource(itemID, detail.MediaType, selectedMediaSource, *plannedSource); err != nil {
+					return nil, err
+				}
+			}
 			info.PlaySessionID = plan.PlaySessionID
 			rawPlaybackURL := plannedSource.DirectStreamURL
 			if plannedSource.TranscodingURL != "" {
@@ -288,9 +294,36 @@ func (d *Emby) toPlaybackMediaSource(itemID, mediaType string, source embyMediaS
 	return result, nil
 }
 
-func (d *Emby) getWebPlaybackInfo(ctx context.Context, itemID, deviceID, mediaSourceID string, audioStreamIndex, maxBitrate int) (*embyPlaybackInfoResp, error) {
+func getPlaybackMediaSource(sources []embyPlaybackMediaSource, sourceID string) *embyPlaybackMediaSource {
+	for i := range sources {
+		if strings.EqualFold(strings.TrimSpace(sources[i].ID), strings.TrimSpace(sourceID)) {
+			return &sources[i]
+		}
+	}
+	return nil
+}
+
+func (d *Emby) mergePlaybackMediaSource(itemID, mediaType string, target *embyPlaybackMediaSource, source embyMediaSource) error {
+	merged, err := d.toPlaybackMediaSource(itemID, mediaType, source)
+	if err != nil {
+		return err
+	}
+
+	// Keep the static direct URL generated from the item detail. The playback
+	// response is used here for its resolved stream URLs and stream metadata.
+	merged.DirectURL = target.DirectURL
+	if merged.DefaultAudioStreamIndex < 0 {
+		merged.DefaultAudioStreamIndex = target.DefaultAudioStreamIndex
+	}
+	if merged.DefaultSubtitleStreamIndex < 0 {
+		merged.DefaultSubtitleStreamIndex = target.DefaultSubtitleStreamIndex
+	}
+	*target = merged
+	return nil
+}
+
+func (d *Emby) getWebPlaybackInfo(ctx context.Context, itemID, deviceID, mediaSourceID string, audioStreamIndex, subtitleStreamIndex, maxBitrate int) (*embyPlaybackInfoResp, error) {
 	_, userID := d.auth()
-	subtitleOff := -1
 	payload := map[string]interface{}{
 		"UserId":              userID,
 		"IsPlayback":          true,
@@ -298,7 +331,7 @@ func (d *Emby) getWebPlaybackInfo(ctx context.Context, itemID, deviceID, mediaSo
 		"MaxStreamingBitrate": maxBitrate,
 		"MediaSourceId":       mediaSourceID,
 		"AudioStreamIndex":    audioStreamIndex,
-		"SubtitleStreamIndex": subtitleOff,
+		"SubtitleStreamIndex": subtitleStreamIndex,
 		"DeviceProfile":       embyWebDeviceProfile(maxBitrate),
 	}
 	var info embyPlaybackInfoResp

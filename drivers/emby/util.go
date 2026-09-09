@@ -204,7 +204,7 @@ func (d *Emby) getItemDetail(ctx context.Context, fileID string) (*itemDetailRes
 	_, userID := d.auth()
 	var detail itemDetailResp
 	query := url.Values{}
-	query.Set("Fields", "MediaSources,MediaType,RunTimeTicks")
+	query.Set("Fields", "MediaSources,MediaType,RunTimeTicks,UserData")
 	if err := d.getJSON(ctx, "/Users/"+userID+"/Items/"+fileID, query, &detail, "item detail"); err != nil {
 		return nil, err
 	}

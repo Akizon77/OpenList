@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"path"
 	"path/filepath"
@@ -124,6 +125,7 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 		writeRunningProgress(previousProgress.ObjCount)
 	}
 	staged := make([]ObjWithParent, 0)
+	stagedPaths := make(map[string]struct{})
 	for _, indexPath := range indexPaths {
 		walkFn := func(indexPath string, info model.Obj) error {
 			if stopRequested() {
@@ -143,6 +145,10 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 			if indexPath == "/" {
 				return nil
 			}
+			if _, exists := stagedPaths[indexPath]; exists {
+				return nil
+			}
+			stagedPaths[indexPath] = struct{}{}
 			staged = append(staged, ObjWithParent{
 				Obj:    info,
 				Parent: path.Dir(indexPath),
@@ -152,6 +158,29 @@ func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth 
 				writeRunningProgress(previousProgress.ObjCount)
 			}
 			return nil
+		}
+		if count && indexPath == "/" {
+			storages := op.GetAllStorages()
+			if len(storages) > 0 {
+				errs := make([]error, 0)
+				for _, storage := range storages {
+					if storage.GetStorage().DisableIndex {
+						continue
+					}
+					mountPath := storage.GetStorage().MountPath
+					if err := fs.WalkStorageFS(context.WithValue(ctx, conf.UserKey, admin), storage, mountPath, maxDepth, walkFn); err != nil {
+						errs = append(errs, fmt.Errorf("storage %q (%s): %w", mountPath, storage.Config().Name, err))
+						log.Errorf("index storage %q (%s) failed after scanning %d objects: %+v", mountPath, storage.Config().Name, scannedCount, err)
+					}
+				}
+				if len(errs) > 0 {
+					err = stderrors.Join(errs...)
+					finish(0, err)
+					return err
+				}
+				writeRunningProgress(previousProgress.ObjCount)
+				continue
+			}
 		}
 		fi, err := fs.Get(ctx, indexPath, &fs.GetArgs{})
 		if err != nil {
