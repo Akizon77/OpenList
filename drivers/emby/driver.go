@@ -172,11 +172,28 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 			obj.Size = 0
 		}
 		objs = append(objs, obj)
+		sidecars, sidecarErr := d.sidecarObjects(it, parentPath, displayName, obj)
+		if sidecarErr != nil {
+			return nil, sidecarErr
+		}
+		objs = append(objs, sidecars...)
 	}
 	return objs, nil
 }
 
 func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
+	if ref, ok := decodeSidecarRef(file.GetID()); ok {
+		sidecarURL, err := d.sidecarURL(ref)
+		if err != nil {
+			return nil, err
+		}
+		return &model.Link{
+			URL: sidecarURL,
+			Header: http.Header{
+				"User-Agent": []string{base.UserAgent},
+			},
+		}, nil
+	}
 	if file.IsDir() {
 		return nil, errs.NotFile
 	}

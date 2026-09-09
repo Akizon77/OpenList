@@ -157,7 +157,7 @@ func (d *Emby) getItems(ctx context.Context, parentID string) ([]embyItem, error
 		query := url.Values{}
 		query.Set("ParentId", parentID)
 		query.Set("Recursive", "false")
-		query.Set("Fields", "Path,Size,DateCreated,SeriesName,IndexNumber,ParentIndexNumber")
+		query.Set("Fields", "Path,Size,DateCreated,SeriesName,IndexNumber,ParentIndexNumber,MediaSources,MediaStreams")
 		query.Set("StartIndex", fmt.Sprintf("%d", startIndex))
 		query.Set("Limit", fmt.Sprintf("%d", embyPageSize))
 		if err := d.getJSON(ctx, "/Users/"+userID+"/Items", query, &page, "list"); err != nil {

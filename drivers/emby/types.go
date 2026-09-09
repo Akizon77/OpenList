@@ -18,19 +18,20 @@ type listResp struct {
 }
 
 type embyItem struct {
-	Name         string       `json:"Name"`
-	ID           string       `json:"Id"`
-	Type         string       `json:"Type"`
-	MediaType    string       `json:"MediaType"`
-	Path         string       `json:"Path"`
-	SeriesName   string       `json:"SeriesName"`
-	IndexNumber  int          `json:"IndexNumber"`
-	ParentIndex  int          `json:"ParentIndexNumber"`
-	IsFolder     bool         `json:"IsFolder"`
-	Size         int64        `json:"Size"`
-	RunTimeTicks int64        `json:"RunTimeTicks"`
-	DateCreated  string       `json:"DateCreated"`
-	UserData     embyUserData `json:"UserData"`
+	MediaSources []embyMediaSource `json:"MediaSources"`
+	Name         string            `json:"Name"`
+	ID           string            `json:"Id"`
+	Type         string            `json:"Type"`
+	MediaType    string            `json:"MediaType"`
+	Path         string            `json:"Path"`
+	SeriesName   string            `json:"SeriesName"`
+	IndexNumber  int               `json:"IndexNumber"`
+	ParentIndex  int               `json:"ParentIndexNumber"`
+	IsFolder     bool              `json:"IsFolder"`
+	Size         int64             `json:"Size"`
+	RunTimeTicks int64             `json:"RunTimeTicks"`
+	DateCreated  string            `json:"DateCreated"`
+	UserData     embyUserData      `json:"UserData"`
 }
 
 type itemDetailResp struct {
