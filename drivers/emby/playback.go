@@ -270,15 +270,7 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 				rawPlaybackURL = plannedSource.TranscodingURL
 				info.PlaybackMethod = "Transcode"
 			default:
-				if plannedSource.TranscodingURL != "" {
-					rawPlaybackURL = plannedSource.TranscodingURL
-					info.PlaybackMethod = "Transcode"
-				} else if plannedSource.DirectStreamURL != "" {
-					rawPlaybackURL = plannedSource.DirectStreamURL
-					info.PlaybackMethod = "DirectStream"
-				} else {
-					info.PlaybackMethod = "DirectPlay"
-				}
+				info.PlaybackMethod = "DirectPlay"
 			}
 			resolved, resolveErr := d.resolveEmbyURL(rawPlaybackURL)
 			if resolveErr != nil {

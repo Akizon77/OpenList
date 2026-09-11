@@ -61,13 +61,13 @@ func TestBuildPlaybackInfoSelectsRequestedPlaybackMode(t *testing.T) {
 		wantURLQueryParameter string
 	}{
 		{
-			name:                  "auto follows Emby transcode plan",
+			name:                  "auto prefers original stream",
 			mode:                  "auto",
-			wantMethod:            "Transcode",
+			wantMethod:            "DirectPlay",
 			wantTranscoding:       true,
 			wantDirectPlay:        true,
 			wantDirectStream:      true,
-			wantURLQueryParameter: "transcode=true",
+			wantURLQueryParameter: "Static=true",
 		},
 		{
 			name:                  "direct forces original stream",
