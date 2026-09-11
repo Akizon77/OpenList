@@ -193,6 +193,8 @@ func admin(g *gin.RouterGroup) {
 func fsAndShare(g *gin.RouterGroup) {
 	g.Any("/list", handles.FsListSplit)
 	g.Any("/get", handles.FsGetSplit)
+	g.POST("/danmaku/search", handles.FsDanmakuSearch)
+	g.POST("/danmaku/comments", handles.FsDanmakuComments)
 	a := g.Group("/archive")
 	a.Any("/meta", handles.FsArchiveMetaSplit)
 	a.Any("/list", handles.FsArchiveListSplit)

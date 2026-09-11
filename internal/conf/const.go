@@ -30,6 +30,8 @@ const (
 	ImageTypes                    = "image_types"
 	ProxyTypes                    = "proxy_types"
 	ProxyIgnoreHeaders            = "proxy_ignore_headers"
+	DanmakuEnabled                = "danmaku_enabled"
+	DanmakuApiUrl                 = "danmaku_api_url"
 	AudioAutoplay                 = "audio_autoplay"
 	VideoAutoplay                 = "video_autoplay"
 	PreviewDownloadByDefault      = "preview_download_by_default"

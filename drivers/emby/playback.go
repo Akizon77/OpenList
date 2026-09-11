@@ -46,7 +46,12 @@ type embyPlaybackReportRequest struct {
 
 type embyPlaybackInfo struct {
 	ItemID                      string                    `json:"item_id"`
+	ItemType                    string                    `json:"item_type"`
 	Name                        string                    `json:"name"`
+	SeriesName                  string                    `json:"series_name,omitempty"`
+	OriginalTitle               string                    `json:"original_title,omitempty"`
+	SeasonNumber                *int                      `json:"season_number,omitempty"`
+	EpisodeNumber               *int                      `json:"episode_number,omitempty"`
 	MediaType                   string                    `json:"media_type"`
 	RunTimeTicks                int64                     `json:"run_time_ticks"`
 	PlaybackPositionTicks       int64                     `json:"playback_position_ticks"`
@@ -168,7 +173,12 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 
 	info := &embyPlaybackInfo{
 		ItemID:                      itemID,
+		ItemType:                    detail.Type,
 		Name:                        detail.Name,
+		SeriesName:                  detail.SeriesName,
+		OriginalTitle:               detail.OriginalTitle,
+		SeasonNumber:                cloneInt(detail.ParentIndex),
+		EpisodeNumber:               cloneInt(detail.IndexNumber),
 		MediaType:                   detail.MediaType,
 		RunTimeTicks:                detail.RunTimeTicks,
 		PlaybackPositionTicks:       detail.UserData.PlaybackPositionTicks,
@@ -236,6 +246,14 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 	}
 
 	return info, nil
+}
+
+func cloneInt(value *int) *int {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }
 
 func (d *Emby) toPlaybackMediaSource(itemID, mediaType string, source embyMediaSource) (embyPlaybackMediaSource, error) {

@@ -119,8 +119,8 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 				episodeCode := ""
 				if m := episodeCodeRegexp.FindString(base); m != "" {
 					episodeCode = strings.ToUpper(m)
-				} else if it.ParentIndex > 0 && it.IndexNumber > 0 {
-					episodeCode = fmt.Sprintf("S%02dE%02d", it.ParentIndex, it.IndexNumber)
+				} else if it.ParentIndex != nil && it.IndexNumber != nil && *it.ParentIndex > 0 && *it.IndexNumber > 0 {
+					episodeCode = fmt.Sprintf("S%02dE%02d", *it.ParentIndex, *it.IndexNumber)
 				}
 
 				title := strings.TrimSpace(base)

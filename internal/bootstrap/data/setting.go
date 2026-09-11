@@ -132,6 +132,8 @@ func InitialSettings() []model.SettingItem {
 		//{Key: conf.OfficeTypes, Value: "doc,docx,xls,xlsx,ppt,pptx", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
 		{Key: conf.ProxyTypes, Value: "m3u8,url", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
 		{Key: conf.ProxyIgnoreHeaders, Value: "authorization,referer", Type: conf.TypeText, Group: model.PREVIEW, Flag: model.PRIVATE},
+		{Key: conf.DanmakuEnabled, Value: "true", Type: conf.TypeBool, Group: model.PREVIEW, Flag: model.PUBLIC},
+		{Key: conf.DanmakuApiUrl, Value: "https://ddplay-api.930524.xyz/cors/https://api.dandanplay.net", Type: conf.TypeString, Group: model.PREVIEW, Flag: model.PRIVATE, Help: "Base URL of a Dandanplay-compatible API. OpenList appends /api/v2 and never accepts an upstream URL from clients."},
 		{Key: "external_previews", Value: `{}`, Type: conf.TypeText, Group: model.PREVIEW},
 		{Key: "iframe_previews", Value: `{
 	"doc,docx,xls,xlsx,ppt,pptx": {
