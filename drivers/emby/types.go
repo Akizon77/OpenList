@@ -46,6 +46,7 @@ type embyMediaSource struct {
 	Container                  string            `json:"Container"`
 	Protocol                   string            `json:"Protocol"`
 	Path                       string            `json:"Path"`
+	Bitrate                    int               `json:"Bitrate"`
 	SupportsDirectPlay         bool              `json:"SupportsDirectPlay"`
 	SupportsDirectStream       bool              `json:"SupportsDirectStream"`
 	SupportsTranscoding        bool              `json:"SupportsTranscoding"`
@@ -61,6 +62,9 @@ type embyMediaStream struct {
 	Index                  int    `json:"Index"`
 	Type                   string `json:"Type"`
 	Codec                  string `json:"Codec"`
+	Bitrate                int    `json:"BitRate"`
+	Width                  int    `json:"Width"`
+	Height                 int    `json:"Height"`
 	Language               string `json:"Language"`
 	DisplayTitle           string `json:"DisplayTitle"`
 	Title                  string `json:"Title"`

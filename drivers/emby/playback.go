@@ -23,12 +23,21 @@ const (
 )
 
 type embyPlaybackInfoRequest struct {
-	Mode                string `json:"mode"`
-	DeviceID            string `json:"device_id"`
-	MediaSourceID       string `json:"media_source_id"`
-	AudioStreamIndex    *int   `json:"audio_stream_index"`
-	SubtitleStreamIndex *int   `json:"subtitle_stream_index"`
-	MaxStreamingBitrate int    `json:"max_streaming_bitrate"`
+	Mode                string                          `json:"mode"`
+	PlaybackMode        string                          `json:"playback_mode"`
+	DeviceID            string                          `json:"device_id"`
+	MediaSourceID       string                          `json:"media_source_id"`
+	AudioStreamIndex    *int                            `json:"audio_stream_index"`
+	SubtitleStreamIndex *int                            `json:"subtitle_stream_index"`
+	MaxStreamingBitrate int                             `json:"max_streaming_bitrate"`
+	DirectPlayProfiles  []embyPlaybackDirectPlayProfile `json:"direct_play_profiles"`
+	HEVCCodecTags       []string                        `json:"hevc_codec_tags"`
+}
+
+type embyPlaybackDirectPlayProfile struct {
+	Container  string `json:"container"`
+	VideoCodec string `json:"video_codec"`
+	AudioCodec string `json:"audio_codec"`
 }
 
 type embyPlaybackReportRequest struct {
@@ -65,6 +74,13 @@ type embyPlaybackInfo struct {
 	PlaybackMethod              string                    `json:"playback_method"`
 	PlaybackError               string                    `json:"playback_error,omitempty"`
 	MediaSources                []embyPlaybackMediaSource `json:"media_sources"`
+	TranscodingQualities        []embyTranscodingQuality  `json:"transcoding_qualities,omitempty"`
+}
+
+type embyTranscodingQuality struct {
+	Name                string `json:"name"`
+	MaxHeight           int    `json:"max_height"`
+	MaxStreamingBitrate int    `json:"max_streaming_bitrate"`
 }
 
 type embyPlaybackMediaSource struct {
@@ -170,6 +186,7 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 	if mode == "" {
 		mode = "web"
 	}
+	playbackMode := normalizePlaybackMode(req.PlaybackMode)
 
 	info := &embyPlaybackInfo{
 		ItemID:                      itemID,
@@ -186,7 +203,7 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 		SelectedMediaSourceID:       selectedSource.ID,
 		SelectedAudioStreamIndex:    selectedAudio,
 		SelectedSubtitleStreamIndex: selectedSubtitle,
-		PlaybackMethod:              "DirectStream",
+		PlaybackMethod:              "DirectPlay",
 	}
 
 	for i := range detail.MediaSources {
@@ -216,10 +233,24 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 
 	if mode != "external" {
 		bitrate := normalizeStreamingBitrate(req.MaxStreamingBitrate)
-		plan, planErr := d.getWebPlaybackInfo(ctx, itemID, deviceID, selectedSource.ID, selectedAudio, selectedSubtitle, bitrate)
+		plan, planErr := d.getWebPlaybackInfo(
+			ctx,
+			itemID,
+			deviceID,
+			selectedSource.ID,
+			selectedAudio,
+			selectedSubtitle,
+			bitrate,
+			playbackMode,
+			req.DirectPlayProfiles,
+			req.HEVCCodecTags,
+		)
 		if planErr != nil {
+			if playbackMode == "transcode" {
+				return nil, planErr
+			}
 			info.PlaybackError = planErr.Error()
-			log.WithError(planErr).Warnf("emby web playback plan failed for item %s; using direct stream", itemID)
+			log.WithError(planErr).Warnf("emby web playback plan failed for item %s; using original stream", itemID)
 		} else if plannedSource := selectPlaybackSource(plan.MediaSources, selectedSource.ID); plannedSource != nil {
 			selectedMediaSource := getPlaybackMediaSource(info.MediaSources, selectedSource.ID)
 			if selectedMediaSource != nil {
@@ -228,13 +259,26 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 				}
 			}
 			info.PlaySessionID = plan.PlaySessionID
-			rawPlaybackURL := plannedSource.DirectStreamURL
-			if plannedSource.TranscodingURL != "" {
+			rawPlaybackURL := directURL
+			switch playbackMode {
+			case "direct":
+				info.PlaybackMethod = "DirectPlay"
+			case "transcode":
+				if plannedSource.TranscodingURL == "" {
+					return nil, fmt.Errorf("emby returned no transcoding URL for item %s", itemID)
+				}
 				rawPlaybackURL = plannedSource.TranscodingURL
 				info.PlaybackMethod = "Transcode"
-			} else if rawPlaybackURL == "" {
-				rawPlaybackURL = directURL
-				info.PlaybackMethod = "DirectPlay"
+			default:
+				if plannedSource.TranscodingURL != "" {
+					rawPlaybackURL = plannedSource.TranscodingURL
+					info.PlaybackMethod = "Transcode"
+				} else if plannedSource.DirectStreamURL != "" {
+					rawPlaybackURL = plannedSource.DirectStreamURL
+					info.PlaybackMethod = "DirectStream"
+				} else {
+					info.PlaybackMethod = "DirectPlay"
+				}
 			}
 			resolved, resolveErr := d.resolveEmbyURL(rawPlaybackURL)
 			if resolveErr != nil {
@@ -244,8 +288,22 @@ func (d *Emby) buildPlaybackInfo(ctx context.Context, itemID string, req embyPla
 			info.PlaybackType = playbackURLType(resolved, plannedSource.Container)
 		}
 	}
+	if source := getPlaybackMediaSource(info.MediaSources, selectedSource.ID); source != nil && source.SupportsTranscoding {
+		info.TranscodingQualities = buildTranscodingQualities(*selectedSource)
+	}
 
 	return info, nil
+}
+
+func normalizePlaybackMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "direct", "original":
+		return "direct"
+	case "transcode", "transcoding":
+		return "transcode"
+	default:
+		return "auto"
+	}
 }
 
 func cloneInt(value *int) *int {
@@ -340,17 +398,32 @@ func (d *Emby) mergePlaybackMediaSource(itemID, mediaType string, target *embyPl
 	return nil
 }
 
-func (d *Emby) getWebPlaybackInfo(ctx context.Context, itemID, deviceID, mediaSourceID string, audioStreamIndex, subtitleStreamIndex, maxBitrate int) (*embyPlaybackInfoResp, error) {
+func (d *Emby) getWebPlaybackInfo(
+	ctx context.Context,
+	itemID, deviceID, mediaSourceID string,
+	audioStreamIndex, subtitleStreamIndex, maxBitrate int,
+	playbackMode string,
+	directPlayProfiles []embyPlaybackDirectPlayProfile,
+	hevcCodecTags []string,
+) (*embyPlaybackInfoResp, error) {
 	_, userID := d.auth()
+	enableDirectPlay := playbackMode != "transcode"
+	enableDirectStream := playbackMode != "direct" && playbackMode != "transcode"
+	enableTranscoding := playbackMode != "direct"
 	payload := map[string]interface{}{
-		"UserId":              userID,
-		"IsPlayback":          true,
-		"AutoOpenLiveStream":  true,
-		"MaxStreamingBitrate": maxBitrate,
-		"MediaSourceId":       mediaSourceID,
-		"AudioStreamIndex":    audioStreamIndex,
-		"SubtitleStreamIndex": subtitleStreamIndex,
-		"DeviceProfile":       embyWebDeviceProfile(maxBitrate),
+		"UserId":               userID,
+		"IsPlayback":           true,
+		"AutoOpenLiveStream":   true,
+		"MaxStreamingBitrate":  maxBitrate,
+		"MediaSourceId":        mediaSourceID,
+		"AudioStreamIndex":     audioStreamIndex,
+		"SubtitleStreamIndex":  subtitleStreamIndex,
+		"EnableDirectPlay":     enableDirectPlay,
+		"EnableDirectStream":   enableDirectStream,
+		"EnableTranscoding":    enableTranscoding,
+		"AllowVideoStreamCopy": playbackMode != "transcode",
+		"AllowAudioStreamCopy": true,
+		"DeviceProfile":        embyWebDeviceProfile(maxBitrate, directPlayProfiles, hevcCodecTags),
 	}
 	var info embyPlaybackInfoResp
 	if err := d.postJSONWithDevice(ctx, "/Items/"+itemID+"/PlaybackInfo", nil, payload, &info, "playback info", deviceID); err != nil {
@@ -365,15 +438,51 @@ func (d *Emby) getWebPlaybackInfo(ctx context.Context, itemID, deviceID, mediaSo
 	return &info, nil
 }
 
-func embyWebDeviceProfile(maxBitrate int) map[string]interface{} {
+func embyWebDeviceProfile(
+	maxBitrate int,
+	directPlayProfiles []embyPlaybackDirectPlayProfile,
+	hevcCodecTags []string,
+) map[string]interface{} {
+	directProfiles := normalizeDirectPlayProfiles(directPlayProfiles)
+	codecProfiles := []map[string]interface{}{
+		{
+			"Type":  "Video",
+			"Codec": "h264",
+			"Conditions": []map[string]interface{}{
+				{
+					"Condition":  "EqualsAny",
+					"Property":   "VideoProfile",
+					"Value":      "high|main|baseline|constrained baseline",
+					"IsRequired": false,
+				},
+			},
+		},
+	}
+	if tags := normalizeHEVCCodecTags(hevcCodecTags); len(tags) > 0 {
+		codecProfiles = append(codecProfiles, map[string]interface{}{
+			"Type":  "Video",
+			"Codec": "hevc",
+			"Conditions": []map[string]interface{}{
+				{
+					"Condition":  "EqualsAny",
+					"Property":   "VideoProfile",
+					"Value":      "main|main 10",
+					"IsRequired": false,
+				},
+				{
+					"Condition":  "EqualsAny",
+					"Property":   "VideoCodecTag",
+					"Value":      strings.Join(tags, "|"),
+					"IsRequired": true,
+				},
+			},
+		})
+	}
 	return map[string]interface{}{
 		"Name":                             "OpenList Web",
 		"MaxStreamingBitrate":              maxBitrate,
 		"MusicStreamingTranscodingBitrate": 384_000,
-		"DirectPlayProfiles": []map[string]interface{}{
-			{"Container": "mp4,m4v", "Type": "Video", "VideoCodec": "h264", "AudioCodec": "aac,mp3"},
-			{"Container": "webm", "Type": "Video", "VideoCodec": "vp8,vp9,av1", "AudioCodec": "vorbis,opus"},
-		},
+		"DirectPlayProfiles":               directProfiles,
 		"TranscodingProfiles": []map[string]interface{}{
 			{
 				"Container":           "ts",
@@ -393,10 +502,77 @@ func embyWebDeviceProfile(maxBitrate int) map[string]interface{} {
 			{"Format": "ass", "Method": "External"},
 			{"Format": "ssa", "Method": "External"},
 		},
-		"CodecProfiles":     []interface{}{},
+		"CodecProfiles":     codecProfiles,
 		"ContainerProfiles": []interface{}{},
 		"ResponseProfiles":  []interface{}{},
 	}
+}
+
+func normalizeDirectPlayProfiles(profiles []embyPlaybackDirectPlayProfile) []map[string]interface{} {
+	if profiles == nil {
+		profiles = []embyPlaybackDirectPlayProfile{
+			{Container: "mp4,m4v,mov", VideoCodec: "h264,hevc,av1", AudioCodec: "aac,mp3,ac3,eac3,opus"},
+			{Container: "webm", VideoCodec: "vp8,vp9,av1", AudioCodec: "vorbis,opus"},
+		}
+	}
+	result := make([]map[string]interface{}, 0, len(profiles))
+	for _, profile := range profiles {
+		container := normalizeMediaList(profile.Container, map[string]struct{}{
+			"mp4": {}, "m4v": {}, "mov": {}, "webm": {}, "mkv": {}, "matroska": {},
+			"ts": {}, "mpegts": {}, "m2ts": {}, "flv": {}, "ogg": {}, "ogv": {},
+		})
+		videoCodec := normalizeMediaList(profile.VideoCodec, map[string]struct{}{
+			"h264": {}, "hevc": {}, "h265": {}, "av1": {}, "vp8": {}, "vp9": {}, "theora": {},
+		})
+		audioCodec := normalizeMediaList(profile.AudioCodec, map[string]struct{}{
+			"aac": {}, "mp3": {}, "opus": {}, "vorbis": {}, "ac3": {}, "eac3": {}, "flac": {}, "alac": {},
+		})
+		if container == "" || videoCodec == "" {
+			continue
+		}
+		result = append(result, map[string]interface{}{
+			"Container":  container,
+			"Type":       "Video",
+			"VideoCodec": videoCodec,
+			"AudioCodec": audioCodec,
+		})
+	}
+	return result
+}
+
+func normalizeMediaList(value string, allowed map[string]struct{}) string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+	for _, part := range strings.Split(value, ",") {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if _, ok := allowed[part]; !ok {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		seen[part] = struct{}{}
+		result = append(result, part)
+	}
+	return strings.Join(result, ",")
+}
+
+func normalizeHEVCCodecTags(tags []string) []string {
+	allowed := map[string]struct{}{"hvc1": {}, "hev1": {}, "dvh1": {}, "dvhe": {}}
+	seen := make(map[string]struct{})
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.ToLower(strings.TrimSpace(tag))
+		if _, ok := allowed[tag]; !ok {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		result = append(result, tag)
+	}
+	return result
 }
 
 func (d *Emby) reportPlayback(ctx context.Context, method, itemID string, req embyPlaybackReportRequest) error {
@@ -475,13 +651,80 @@ func normalizeStreamingBitrate(bitrate int) int {
 	if bitrate <= 0 {
 		return embyDefaultWebBitrate
 	}
-	if bitrate < 1_000_000 {
-		return 1_000_000
+	if bitrate < 420_000 {
+		return 420_000
 	}
 	if bitrate > 200_000_000 {
 		return 200_000_000
 	}
 	return bitrate
+}
+
+var embyTranscodingQualityPresets = []embyTranscodingQuality{
+	{Name: "120 Mbps", MaxHeight: 2160, MaxStreamingBitrate: 120_000_000},
+	{Name: "80 Mbps", MaxHeight: 2160, MaxStreamingBitrate: 80_000_000},
+	{Name: "60 Mbps", MaxHeight: 2160, MaxStreamingBitrate: 60_000_000},
+	{Name: "40 Mbps", MaxHeight: 2160, MaxStreamingBitrate: 40_000_000},
+	{Name: "20 Mbps", MaxHeight: 2160, MaxStreamingBitrate: 20_000_000},
+	{Name: "15 Mbps", MaxHeight: 1440, MaxStreamingBitrate: 15_000_000},
+	{Name: "10 Mbps", MaxHeight: 1440, MaxStreamingBitrate: 10_000_000},
+	{Name: "8 Mbps", MaxHeight: 1080, MaxStreamingBitrate: 8_000_000},
+	{Name: "6 Mbps", MaxHeight: 1080, MaxStreamingBitrate: 6_000_000},
+	{Name: "4 Mbps", MaxHeight: 720, MaxStreamingBitrate: 4_000_000},
+	{Name: "3 Mbps", MaxHeight: 720, MaxStreamingBitrate: 3_000_000},
+	{Name: "1.5 Mbps", MaxHeight: 720, MaxStreamingBitrate: 1_500_000},
+	{Name: "720 kbps", MaxHeight: 480, MaxStreamingBitrate: 720_000},
+	{Name: "420 kbps", MaxHeight: 360, MaxStreamingBitrate: 420_000},
+}
+
+func buildTranscodingQualities(source embyMediaSource) []embyTranscodingQuality {
+	videoBitrate := source.Bitrate
+	videoCodec := ""
+	videoHeight := 0
+	for _, stream := range source.MediaStreams {
+		if !strings.EqualFold(strings.TrimSpace(stream.Type), "video") {
+			continue
+		}
+		videoCodec = strings.ToLower(strings.TrimSpace(stream.Codec))
+		videoHeight = stream.Height
+		if stream.Bitrate > 0 {
+			videoBitrate = stream.Bitrate
+		}
+		break
+	}
+	if videoBitrate <= 0 {
+		return append([]embyTranscodingQuality(nil), embyTranscodingQualityPresets...)
+	}
+
+	referenceBitrate := videoBitrate
+	if referenceBitrate <= 20_000_000 {
+		switch videoCodec {
+		case "hevc", "h265", "av1", "vp9":
+			referenceBitrate = referenceBitrate * 3 / 2
+		}
+	}
+
+	qualities := make([]embyTranscodingQuality, 0, len(embyTranscodingQualityPresets))
+	for i := len(embyTranscodingQualityPresets) - 1; i >= 0; i-- {
+		preset := embyTranscodingQualityPresets[i]
+		if preset.MaxStreamingBitrate > referenceBitrate {
+			qualities = append(qualities, limitQualityHeight(preset, videoHeight))
+			break
+		}
+	}
+	for _, preset := range embyTranscodingQualityPresets {
+		if preset.MaxStreamingBitrate <= referenceBitrate {
+			qualities = append(qualities, limitQualityHeight(preset, videoHeight))
+		}
+	}
+	return qualities
+}
+
+func limitQualityHeight(quality embyTranscodingQuality, sourceHeight int) embyTranscodingQuality {
+	if sourceHeight > 0 && sourceHeight < quality.MaxHeight {
+		quality.MaxHeight = sourceHeight
+	}
+	return quality
 }
 
 func selectPlaybackSource(sources []embyMediaSource, requestedID string) *embyMediaSource {
