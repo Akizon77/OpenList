@@ -110,12 +110,12 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 			if it.IsFolder {
 				displayName = fmt.Sprintf("%s (ID%s)", name, id)
 			} else {
-				ext := path.Ext(strings.TrimSpace(it.Path))
-				if ext == "" {
-					ext = path.Ext(name)
-				}
+				ext := embyItemExtension(it)
 
-				base := strings.TrimSpace(strings.TrimSuffix(name, ext))
+				base := name
+				if nameExt := path.Ext(name); strings.EqualFold(nameExt, ext) || strings.EqualFold(nameExt, ".strm") {
+					base = strings.TrimSpace(strings.TrimSuffix(name, nameExt))
+				}
 				episodeCode := ""
 				if m := episodeCodeRegexp.FindString(base); m != "" {
 					episodeCode = strings.ToUpper(m)
@@ -179,6 +179,53 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 		objs = append(objs, sidecars...)
 	}
 	return objs, nil
+}
+
+func embyItemExtension(item embyItem) string {
+	candidates := make([]string, 0, len(item.MediaSources)*2+2)
+	for _, source := range item.MediaSources {
+		candidates = append(candidates, embyPathExtension(source.Path), embyContainerExtension(source.Container))
+	}
+	candidates = append(candidates, embyPathExtension(item.Path), path.Ext(strings.TrimSpace(item.Name)))
+
+	fallback := ""
+	for _, ext := range candidates {
+		if ext == "" {
+			continue
+		}
+		if fallback == "" {
+			fallback = ext
+		}
+		if !strings.EqualFold(ext, ".strm") {
+			return ext
+		}
+	}
+	return fallback
+}
+
+func embyPathExtension(rawPath string) string {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return ""
+	}
+	if parsed, err := url.Parse(rawPath); err == nil && parsed.Path != "" {
+		if ext := path.Ext(parsed.Path); ext != "" {
+			return ext
+		}
+	}
+	if index := strings.IndexAny(rawPath, "?#"); index >= 0 {
+		rawPath = rawPath[:index]
+	}
+	return path.Ext(rawPath)
+}
+
+func embyContainerExtension(container string) string {
+	container = strings.TrimSpace(strings.SplitN(container, ",", 2)[0])
+	container = strings.TrimPrefix(container, ".")
+	if container == "" {
+		return ""
+	}
+	return "." + container
 }
 
 func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
