@@ -1,9 +1,6 @@
 package search
 
 import (
-	"fmt"
-	"math"
-	"strconv"
 	"strings"
 
 	"github.com/OpenListTeam/OpenList/v4/drivers/base"
@@ -25,13 +22,6 @@ func Progress() (*model.IndexProgress, error) {
 		normalizeIndexProgress(&progress)
 	}
 	return &progress, err
-}
-
-func normalizeIndexProgress(progress *model.IndexProgress) {
-	if progress.Error != "" && progress.LastAttemptTime == nil {
-		progress.LastAttemptTime = progress.LastDoneTime
-		progress.LastDoneTime = nil
-	}
 }
 
 func WriteProgress(progress *model.IndexProgress) {
@@ -94,18 +84,7 @@ func isIgnorePath(path string) bool {
 	return false
 }
 
-func validateIndexRequestRateLimit(value string) error {
-	limit, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-	if err != nil || math.IsNaN(limit) || math.IsInf(limit, 0) || limit < 0 {
-		return fmt.Errorf("index request rate limit must be a non-negative number")
-	}
-	return nil
-}
-
 func init() {
-	op.RegisterSettingItemHook(conf.IndexRequestRateLimit, func(item *model.SettingItem) error {
-		return validateIndexRequestRateLimit(item.Value)
-	})
 	op.RegisterSettingItemHook(conf.IgnorePaths, func(item *model.SettingItem) error {
 		updateIgnorePaths(item.Value)
 		return nil

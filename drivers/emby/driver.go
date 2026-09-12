@@ -181,53 +181,6 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 	return objs, nil
 }
 
-func embyItemExtension(item embyItem) string {
-	candidates := make([]string, 0, len(item.MediaSources)*2+2)
-	for _, source := range item.MediaSources {
-		candidates = append(candidates, embyPathExtension(source.Path), embyContainerExtension(source.Container))
-	}
-	candidates = append(candidates, embyPathExtension(item.Path), path.Ext(strings.TrimSpace(item.Name)))
-
-	fallback := ""
-	for _, ext := range candidates {
-		if ext == "" {
-			continue
-		}
-		if fallback == "" {
-			fallback = ext
-		}
-		if !strings.EqualFold(ext, ".strm") {
-			return ext
-		}
-	}
-	return fallback
-}
-
-func embyPathExtension(rawPath string) string {
-	rawPath = strings.TrimSpace(rawPath)
-	if rawPath == "" {
-		return ""
-	}
-	if parsed, err := url.Parse(rawPath); err == nil && parsed.Path != "" {
-		if ext := path.Ext(parsed.Path); ext != "" {
-			return ext
-		}
-	}
-	if index := strings.IndexAny(rawPath, "?#"); index >= 0 {
-		rawPath = rawPath[:index]
-	}
-	return path.Ext(rawPath)
-}
-
-func embyContainerExtension(container string) string {
-	container = strings.TrimSpace(strings.SplitN(container, ",", 2)[0])
-	container = strings.TrimPrefix(container, ".")
-	if container == "" {
-		return ""
-	}
-	return "." + container
-}
-
 func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
 	if ref, ok := decodeSidecarRef(file.GetID()); ok {
 		sidecarURL, err := d.sidecarURL(ref)
@@ -301,20 +254,6 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 			"User-Agent": []string{base.UserAgent},
 		},
 	}, nil
-}
-
-func selectMediaSource(mediaSources []embyMediaSource) (string, string) {
-	for i := range mediaSources {
-		if strings.TrimSpace(mediaSources[i].ID) != "" && mediaSources[i].SupportsDirectStream {
-			return strings.TrimSpace(mediaSources[i].ID), strings.TrimSpace(mediaSources[i].Container)
-		}
-	}
-	for i := range mediaSources {
-		if strings.TrimSpace(mediaSources[i].ID) != "" {
-			return strings.TrimSpace(mediaSources[i].ID), strings.TrimSpace(mediaSources[i].Container)
-		}
-	}
-	return "", ""
 }
 
 var _ driver.Driver = (*Emby)(nil)

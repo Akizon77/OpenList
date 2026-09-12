@@ -30,28 +30,6 @@ func Running() bool {
 	return Quit.Load() != nil
 }
 
-func completedBuildProgress(previous *model.IndexProgress, indexedCount, scannedCount uint64, existingIndexPreserved bool, now time.Time, err error) *model.IndexProgress {
-	progress := &model.IndexProgress{
-		ObjCount:        indexedCount,
-		ScannedCount:    scannedCount,
-		IsDone:          true,
-		LastAttemptTime: &now,
-	}
-	if err == nil {
-		progress.LastDoneTime = &now
-		return progress
-	}
-
-	progress.Error = err.Error()
-	if previous != nil {
-		progress.LastDoneTime = previous.LastDoneTime
-		if existingIndexPreserved {
-			progress.ObjCount = previous.ObjCount
-		}
-	}
-	return progress
-}
-
 func BuildIndex(ctx context.Context, indexPaths, ignorePaths []string, maxDepth int, count bool) error {
 	log.Infof("build index for: %+v", indexPaths)
 	log.Infof("ignore paths: %+v", ignorePaths)
