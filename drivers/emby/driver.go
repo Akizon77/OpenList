@@ -109,8 +109,12 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 	}
 	for _, it := range items {
 		modified := time.Now()
-		if it.DateCreated != "" {
-			if t, parseErr := time.Parse(time.RFC3339Nano, it.DateCreated); parseErr == nil {
+		modifiedDate := it.DateCreated
+		if parentID == embyResumeFolderID && it.UserData.LastPlayedDate != "" {
+			modifiedDate = it.UserData.LastPlayedDate
+		}
+		if modifiedDate != "" {
+			if t, parseErr := time.Parse(time.RFC3339Nano, modifiedDate); parseErr == nil {
 				modified = t
 			}
 		}

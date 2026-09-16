@@ -77,8 +77,9 @@ type embyMediaStream struct {
 }
 
 type embyUserData struct {
-	PlaybackPositionTicks int64 `json:"PlaybackPositionTicks"`
-	Played                bool  `json:"Played"`
+	PlaybackPositionTicks int64  `json:"PlaybackPositionTicks"`
+	LastPlayedDate        string `json:"LastPlayedDate"`
+	Played                bool   `json:"Played"`
 }
 
 type embyPlaybackInfoResp struct {

@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
 	"github.com/OpenListTeam/OpenList/v4/internal/op"
@@ -92,6 +93,7 @@ func TestResumeItemsPaginateWithinConfiguredRoot(t *testing.T) {
 						ID: fmt.Sprintf("item-%d", start+i), Name: "Episode", SeriesName: "Series",
 						ParentIndex: intPointer(1), IndexNumber: intPointer(2),
 						MediaSources: []embyMediaSource{{ID: "source", Container: "mkv"}},
+						UserData:     embyUserData{LastPlayedDate: "2026-09-15T12:34:56Z"},
 					}
 				}
 				_ = json.NewEncoder(w).Encode(listResp{Items: items, TotalRecordCount: intPointer(embyPageSize + 1)})
@@ -111,6 +113,10 @@ func TestResumeItemsPaginateWithinConfiguredRoot(t *testing.T) {
 			if first.GetID() != "item-0" || first.GetName() != "Series Episode - [S01E02] (IDitem-0).mkv" ||
 				first.IsDir() || first.GetPath() != path.Join(folderPath, first.GetName()) {
 				t.Fatalf("resume media = %#v", first)
+			}
+			wantModified, _ := time.Parse(time.RFC3339Nano, "2026-09-15T12:34:56Z")
+			if !first.ModTime().Equal(wantModified) {
+				t.Fatalf("resume media modified = %v, want %v", first.ModTime(), wantModified)
 			}
 		})
 	}
