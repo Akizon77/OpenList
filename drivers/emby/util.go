@@ -47,7 +47,21 @@ func (d *Emby) getResumeItems(ctx context.Context) ([]embyItem, error) {
 	query.Set("MediaTypes", "Video")
 	query.Set("SortBy", "DatePlayed")
 	query.Set("SortOrder", "Descending")
-	return d.getPagedItems(ctx, "/Users/"+userID+"/Items/Resume", query)
+	items, err := d.getPagedItems(ctx, "/Users/"+userID+"/Items/Resume", query)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		if strings.TrimSpace(items[i].UserData.LastPlayedDate) != "" {
+			continue
+		}
+		detail, detailErr := d.getItemDetail(ctx, items[i].ID)
+		if detailErr != nil {
+			continue
+		}
+		items[i].UserData.LastPlayedDate = detail.UserData.LastPlayedDate
+	}
+	return items, nil
 }
 
 func (d *Emby) getPagedItems(ctx context.Context, endpoint string, query url.Values) ([]embyItem, error) {

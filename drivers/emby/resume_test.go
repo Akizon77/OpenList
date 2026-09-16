@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"path"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -122,6 +124,64 @@ func TestResumeItemsPaginateWithinConfiguredRoot(t *testing.T) {
 	}
 }
 
+func TestResumeItemsBackfillLastPlayedDatesSequentially(t *testing.T) {
+	var active atomic.Int32
+	var maxActive atomic.Int32
+	var detailRequests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/Users/test-user/Items/Resume":
+			_ = json.NewEncoder(w).Encode(listResp{
+				Items: []embyItem{
+					{ID: "item-1", Name: "Episode 1", DateCreated: "2024-01-01T00:00:00Z"},
+					{ID: "item-2", Name: "Episode 2", DateCreated: "2024-01-02T00:00:00Z"},
+				},
+				TotalRecordCount: intPointer(2),
+			})
+		case "/Users/test-user/Items/item-1", "/Users/test-user/Items/item-2":
+			detailRequests.Add(1)
+			current := active.Add(1)
+			for {
+				previous := maxActive.Load()
+				if current <= previous || maxActive.CompareAndSwap(previous, current) {
+					break
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+			active.Add(-1)
+			lastPlayed := "2026-09-13T10:28:06Z"
+			if r.URL.Path == "/Users/test-user/Items/item-2" {
+				lastPlayed = "2026-09-14T10:28:06Z"
+			}
+			_ = json.NewEncoder(w).Encode(itemDetailResp{
+				embyItem: embyItem{
+					ID:       strings.TrimPrefix(r.URL.Path, "/Users/test-user/Items/"),
+					UserData: embyUserData{LastPlayedDate: lastPlayed},
+				},
+			})
+		default:
+			t.Errorf("unexpected endpoint: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	items, err := newTestEmby(server).getResumeItems(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detailRequests.Load() != 2 || maxActive.Load() != 1 {
+		t.Fatalf("detail requests = %d, max active = %d", detailRequests.Load(), maxActive.Load())
+	}
+	if items[0].UserData.LastPlayedDate != "2026-09-13T10:28:06Z" ||
+		items[1].UserData.LastPlayedDate != "2026-09-14T10:28:06Z" {
+		t.Fatalf("resume dates = %#v", []string{
+			items[0].UserData.LastPlayedDate,
+			items[1].UserData.LastPlayedDate,
+		})
+	}
+}
+
 func TestPlaybackStopRefreshesResumeDirectory(t *testing.T) {
 	resumeRequests := 0
 	stopped := false
@@ -136,6 +196,10 @@ func TestPlaybackStopRefreshesResumeDirectory(t *testing.T) {
 				items = nil
 			}
 			_ = json.NewEncoder(w).Encode(listResp{Items: items, TotalRecordCount: intPointer(len(items))})
+		case "/Users/test-user/Items/item-1":
+			_ = json.NewEncoder(w).Encode(itemDetailResp{
+				embyItem: embyItem{ID: "item-1", UserData: embyUserData{LastPlayedDate: "2026-09-15T12:34:56Z"}},
+			})
 		case "/Sessions/Playing/Stopped":
 			stopped = true
 			w.WriteHeader(http.StatusNoContent)
