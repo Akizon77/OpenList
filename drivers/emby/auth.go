@@ -26,7 +26,8 @@ func (d *Emby) authenticate(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Emby-Authorization", `MediaBrowser Client="OpenList", Device="OpenList", DeviceId="openlist-emby", Version="1.0.0"`)
+	req.Header.Set("X-Emby-Authorization", embyAuthorization(embyDeviceID))
+	req.Header.Set("User-Agent", embyUserAgent)
 
 	resp, err := d.client.Do(req)
 	if err != nil {

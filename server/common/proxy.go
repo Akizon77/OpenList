@@ -51,20 +51,23 @@ func Proxy(w http.ResponseWriter, r *http.Request, link *model.Link, file model.
 	}
 
 	//transparent proxy
-	header := net.ProcessHeader(r.Header, link.Header)
+	header := net.ProcessHeader(r.Header, link.Header, link.RequestHeaderAllowlist)
 	res, err := net.RequestHttp(r.Context(), r.Method, header, link.URL)
 	if err != nil {
 		return err
 	}
 	defer res.Body.Close()
+	return ProxyResponse(w, r, res, file.GetName())
+}
 
+func ProxyResponse(w http.ResponseWriter, r *http.Request, res *http.Response, name string) error {
 	maps.Copy(w.Header(), res.Header)
-	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(file.GetName()))
+	w.Header().Set("Content-Disposition", utils.GenerateContentDisposition(name))
 	w.WriteHeader(res.StatusCode)
 	if r.Method == http.MethodHead {
 		return nil
 	}
-	_, err = utils.CopyWithBuffer(w, &stream.RateLimitReader{
+	_, err := utils.CopyWithBuffer(w, &stream.RateLimitReader{
 		Reader:  res.Body,
 		Limiter: stream.ServerDownloadLimit,
 		Ctx:     r.Context(),

@@ -5,11 +5,16 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strings"
 )
 
 var episodeCodeRegexp = regexp.MustCompile(`(?i)\bS\d{1,2}E\d{1,2}\b`)
 
-const embyPageSize = 1000
+const (
+	embyPageSize         = 1000
+	embyResumeFolderID   = "emby-resume"
+	embyResumeFolderName = "\u7ee7\u7eed\u89c2\u770b"
+)
 
 func (d *Emby) login(ctx context.Context) error {
 	d.authMu.Lock()
@@ -26,16 +31,33 @@ func (d *Emby) login(ctx context.Context) error {
 
 func (d *Emby) getItems(ctx context.Context, parentID string) ([]embyItem, error) {
 	_, userID := d.auth()
+	query := url.Values{}
+	query.Set("ParentId", parentID)
+	query.Set("Recursive", "false")
+	return d.getPagedItems(ctx, "/Users/"+userID+"/Items", query)
+}
+
+func (d *Emby) getResumeItems(ctx context.Context) ([]embyItem, error) {
+	_, userID := d.auth()
+	query := url.Values{}
+	if rootID := strings.TrimSpace(d.RootFolderID); rootID != "" {
+		query.Set("ParentId", rootID)
+	}
+	query.Set("Recursive", "true")
+	query.Set("MediaTypes", "Video")
+	query.Set("SortBy", "DatePlayed")
+	query.Set("SortOrder", "Descending")
+	return d.getPagedItems(ctx, "/Users/"+userID+"/Items/Resume", query)
+}
+
+func (d *Emby) getPagedItems(ctx context.Context, endpoint string, query url.Values) ([]embyItem, error) {
+	query.Set("Fields", "Path,Size,DateCreated,SeriesName,IndexNumber,ParentIndexNumber,MediaSources,MediaStreams")
 	items := make([]embyItem, 0)
 	for startIndex := 0; ; {
 		var page listResp
-		query := url.Values{}
-		query.Set("ParentId", parentID)
-		query.Set("Recursive", "false")
-		query.Set("Fields", "Path,Size,DateCreated,SeriesName,IndexNumber,ParentIndexNumber,MediaSources,MediaStreams")
 		query.Set("StartIndex", fmt.Sprintf("%d", startIndex))
 		query.Set("Limit", fmt.Sprintf("%d", embyPageSize))
-		if err := d.getJSON(ctx, "/Users/"+userID+"/Items", query, &page, "list"); err != nil {
+		if err := d.getJSON(ctx, endpoint, query, &page, "list"); err != nil {
 			return nil, err
 		}
 

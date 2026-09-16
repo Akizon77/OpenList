@@ -29,6 +29,8 @@ type Link struct {
 	URL         string        `json:"url"`    // most common way
 	Header      http.Header   `json:"header"` // needed header (for url)
 	RangeReader RangeReaderIF `json:"-"`      // recommended way if can't use URL
+	// Nil preserves the default proxy header forwarding policy.
+	RequestHeaderAllowlist []string `json:"-"`
 
 	Expiration *time.Duration // local cache expire Duration
 
@@ -44,15 +46,16 @@ type Link struct {
 
 func (l *Link) Clone() *Link {
 	return &Link{
-		URL:              l.URL,
-		Header:           l.Header,
-		RangeReader:      l.RangeReader,
-		Expiration:       l.Expiration,
-		Concurrency:      l.Concurrency,
-		PartSize:         l.PartSize,
-		ContentLength:    l.ContentLength,
-		SyncClosers:      utils.NewSyncClosers(l),
-		RequireReference: l.RequireReference,
+		URL:                    l.URL,
+		Header:                 l.Header,
+		RangeReader:            l.RangeReader,
+		RequestHeaderAllowlist: l.RequestHeaderAllowlist,
+		Expiration:             l.Expiration,
+		Concurrency:            l.Concurrency,
+		PartSize:               l.PartSize,
+		ContentLength:          l.ContentLength,
+		SyncClosers:            utils.NewSyncClosers(l),
+		RequireReference:       l.RequireReference,
 	}
 }
 

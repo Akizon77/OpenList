@@ -80,9 +80,12 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 		items []embyItem
 		err   error
 	)
-	if parentID == "" {
+	switch parentID {
+	case embyResumeFolderID:
+		items, err = d.getResumeItems(ctx)
+	case "":
 		items, err = d.getViews(ctx)
-	} else {
+	default:
 		items, err = d.getItems(ctx, parentID)
 	}
 	if err != nil {
@@ -94,7 +97,16 @@ func (d *Emby) List(ctx context.Context, dir model.Obj, args model.ListArgs) ([]
 		parentPath = dir.GetPath()
 	}
 
-	objs := make([]model.Obj, 0, len(items))
+	objs := make([]model.Obj, 0, len(items)+1)
+	if parentID == strings.TrimSpace(d.RootFolderID) {
+		objs = append(objs, &model.Object{
+			ID:       embyResumeFolderID,
+			Name:     embyResumeFolderName,
+			Path:     path.Join(parentPath, embyResumeFolderName),
+			Modified: d.Modified,
+			IsFolder: true,
+		})
+	}
 	for _, it := range items {
 		modified := time.Now()
 		if it.DateCreated != "" {
@@ -188,10 +200,9 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 			return nil, err
 		}
 		return &model.Link{
-			URL: sidecarURL,
-			Header: http.Header{
-				"User-Agent": []string{base.UserAgent},
-			},
+			URL:                    sidecarURL,
+			Header:                 embyProxyHeaders(embyDeviceID),
+			RequestHeaderAllowlist: embyProxyRequestHeaders,
 		}, nil
 	}
 	if file.IsDir() {
@@ -249,10 +260,9 @@ func (d *Emby) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*
 	}
 
 	return &model.Link{
-		URL: u.String(),
-		Header: http.Header{
-			"User-Agent": []string{base.UserAgent},
-		},
+		URL:                    u.String(),
+		Header:                 embyProxyHeaders(embyDeviceID),
+		RequestHeaderAllowlist: embyProxyRequestHeaders,
 	}, nil
 }
 

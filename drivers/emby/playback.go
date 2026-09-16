@@ -11,6 +11,8 @@ import (
 
 	"github.com/OpenListTeam/OpenList/v4/internal/errs"
 	"github.com/OpenListTeam/OpenList/v4/internal/model"
+	"github.com/OpenListTeam/OpenList/v4/internal/op"
+	"github.com/OpenListTeam/OpenList/v4/pkg/utils"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -136,7 +138,14 @@ func (d *Emby) Other(ctx context.Context, args model.OtherArgs) (interface{}, er
 		if err := decodeEmbyOtherData(args.Data, &req); err != nil {
 			return nil, err
 		}
-		return d.buildPlaybackInfo(ctx, args.Obj.GetID(), req)
+		info, err := d.buildPlaybackInfo(ctx, args.Obj.GetID(), req)
+		if err != nil {
+			return nil, err
+		}
+		if d.WebProxy {
+			d.proxyPlaybackInfo(ctx, utils.GetFullPath(d.MountPath, args.Obj.GetPath()), info)
+		}
+		return info, nil
 	case embyPlaybackStartMethod, embyPlaybackProgressMethod, embyPlaybackStopMethod:
 		var req embyPlaybackReportRequest
 		if err := decodeEmbyOtherData(args.Data, &req); err != nil {
@@ -471,7 +480,7 @@ func embyWebDeviceProfile(
 		})
 	}
 	return map[string]interface{}{
-		"Name":                             "OpenList Web",
+		"Name":                             embyClientName,
 		"MaxStreamingBitrate":              maxBitrate,
 		"MusicStreamingTranscodingBitrate": 384_000,
 		"DirectPlayProfiles":               directProfiles,
@@ -605,7 +614,13 @@ func (d *Emby) reportPlayback(ctx context.Context, method, itemID string, req em
 		endpoint = "/Sessions/Playing/Stopped"
 		action = "playback stop"
 	}
-	return d.postJSONWithDevice(ctx, endpoint, nil, payload, nil, action, normalizeEmbyDeviceID(req.DeviceID))
+	if err := d.postJSONWithDevice(ctx, endpoint, nil, payload, nil, action, normalizeEmbyDeviceID(req.DeviceID)); err != nil {
+		return err
+	}
+	if method == embyPlaybackStopMethod {
+		op.Cache.DeleteDirectory(d, "/"+embyResumeFolderName)
+	}
+	return nil
 }
 
 func normalizeEmbyPlayMethod(method string) string {
@@ -622,7 +637,7 @@ func normalizeEmbyPlayMethod(method string) string {
 func normalizeEmbyDeviceID(deviceID string) string {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
-		return "openlist-web"
+		return embyWebDeviceID
 	}
 	var b strings.Builder
 	for _, r := range deviceID {
@@ -634,7 +649,7 @@ func normalizeEmbyDeviceID(deviceID string) string {
 		}
 	}
 	if b.Len() == 0 {
-		return "openlist-web"
+		return embyWebDeviceID
 	}
 	return b.String()
 }

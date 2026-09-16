@@ -50,6 +50,8 @@ func Init(e *gin.Engine) {
 	g.GET("/p/*path", middlewares.PathParse, signCheck, downloadLimiter, handles.Proxy)
 	g.HEAD("/d/*path", middlewares.PathParse, signCheck, handles.Down)
 	g.HEAD("/p/*path", middlewares.PathParse, signCheck, handles.Proxy)
+	g.GET("/ep/*path", middlewares.PathParse, middlewares.EmbyProxySign, downloadLimiter, handles.EmbyProxy)
+	g.HEAD("/ep/*path", middlewares.PathParse, middlewares.EmbyProxySign, handles.EmbyProxy)
 	archiveSignCheck := middlewares.Down(sign.VerifyArchive)
 	g.GET("/ad/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveDown)
 	g.GET("/ap/*path", middlewares.PathParse, archiveSignCheck, downloadLimiter, handles.ArchiveProxy)

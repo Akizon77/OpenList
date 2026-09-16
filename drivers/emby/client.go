@@ -18,12 +18,22 @@ import (
 )
 
 const (
+	embyClientName     = "Mahiro Client"
+	embyClientVersion  = "0.0.1"
+	embyDeviceID       = "mahiro-emby"
+	embyWebDeviceID    = "mahiro-web"
+	embyUserAgent      = embyClientName + "/" + embyClientVersion
 	embyMaxAttempts    = 4
 	embyErrorBodyLimit = 512
 	embyMaxRetryDelay  = 30 * time.Second
 )
 
 var embyRetryBaseDelay = time.Second
+
+func embyAuthorization(deviceID string) string {
+	return fmt.Sprintf(`MediaBrowser Client="%s", Device="%s", DeviceId="%s", Version="%s"`,
+		embyClientName, embyClientName, normalizeEmbyDeviceID(deviceID), embyClientVersion)
+}
 
 type embyHTTPError struct {
 	action      string
@@ -60,7 +70,7 @@ func (e *embyHTTPError) Unwrap() error {
 }
 
 func (d *Emby) getJSON(ctx context.Context, endpoint string, query url.Values, out any, action string) error {
-	return d.requestJSON(ctx, http.MethodGet, endpoint, query, nil, out, action, "openlist-emby")
+	return d.requestJSON(ctx, http.MethodGet, endpoint, query, nil, out, action, embyDeviceID)
 }
 
 func (d *Emby) postJSONWithDevice(ctx context.Context, endpoint string, query url.Values, payload, out any, action, deviceID string) error {
@@ -121,7 +131,8 @@ func (d *Emby) doJSONRequest(ctx context.Context, method, endpoint string, query
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		req.Header.Set("X-Emby-Authorization", fmt.Sprintf(`MediaBrowser Client="OpenList", Device="OpenList Web", DeviceId="%s", Version="1.0.0"`, normalizeEmbyDeviceID(deviceID)))
+		req.Header.Set("X-Emby-Authorization", embyAuthorization(deviceID))
+		req.Header.Set("User-Agent", embyUserAgent)
 		resp, err := d.client.Do(req)
 		if err != nil {
 			lastErr = &embyHTTPError{

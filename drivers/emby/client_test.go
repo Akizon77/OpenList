@@ -9,7 +9,63 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/OpenListTeam/OpenList/v4/internal/model"
 )
+
+func TestMahiroClientFingerprint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deviceID := "mahiro-emby"
+		if r.URL.Path == "/Sessions/Playing" {
+			deviceID = "mahiro-web-test"
+		}
+		want := fmt.Sprintf(`MediaBrowser Client="Mahiro Client", Device="Mahiro Client", DeviceId="%s", Version="0.0.1"`, deviceID)
+		if got := r.Header.Get("X-Emby-Authorization"); got != want {
+			t.Errorf("authorization = %q, want %q", got, want)
+		}
+		if got := r.UserAgent(); got != "Mahiro Client/0.0.1" {
+			t.Errorf("user agent = %q", got)
+		}
+		switch r.URL.Path {
+		case "/Users/AuthenticateByName":
+			_, _ = fmt.Fprint(w, `{"AccessToken":"token","User":{"Id":"user"}}`)
+		case "/Users/test-user/Items/item-1":
+			_, _ = fmt.Fprint(w, `{"MediaType":"Video","MediaSources":[{"Id":"source","Container":"mp4"}]}`)
+		default:
+			_, _ = fmt.Fprint(w, `{}`)
+		}
+	}))
+	defer server.Close()
+	d := newTestEmby(server)
+	ctx := context.Background()
+	if _, _, err := d.authenticate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.getJSON(ctx, "/Users/test-user/Views", nil, nil, "views"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.reportPlayback(ctx, embyPlaybackStartMethod, "item-1", embyPlaybackReportRequest{
+		DeviceID: "mahiro-web-test", PlaySessionID: "session",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"stream", "download"} {
+		d.LinkMethod = method
+		link, err := d.Link(ctx, &model.Object{ID: "item-1"}, model.LinkArgs{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := link.Header.Get("User-Agent"); got != "Mahiro Client/0.0.1" {
+			t.Errorf("%s user agent = %q", method, got)
+		}
+	}
+	if got := embyWebDeviceProfile(embyDefaultWebBitrate, nil, nil)["Name"]; got != "Mahiro Client" {
+		t.Errorf("device profile name = %v", got)
+	}
+	if got := normalizeEmbyDeviceID(""); got != "mahiro-web" {
+		t.Errorf("default device ID = %q", got)
+	}
+}
 
 type responseBody struct {
 	io.Reader

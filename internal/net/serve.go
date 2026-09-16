@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	gonet "net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -210,10 +211,13 @@ func ServeHTTP(w http.ResponseWriter, r *http.Request, name string, modTime time
 	}
 	return nil
 }
-func ProcessHeader(origin, override http.Header) http.Header {
+func ProcessHeader(origin, override http.Header, allowlist []string) http.Header {
 	result := http.Header{}
 	// client header
 	for h, val := range origin {
+		if allowlist != nil && !slices.Contains(allowlist, http.CanonicalHeaderKey(h)) {
+			continue
+		}
 		if utils.SliceContains(conf.SlicesMap[conf.ProxyIgnoreHeaders], strings.ToLower(h)) {
 			continue
 		}
