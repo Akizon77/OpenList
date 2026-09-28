@@ -14,7 +14,9 @@ const (
 
 type Object struct {
 	model.Object
-	AlbumID string
+	model.Thumbnail
+	AlbumID   string
+	AssetType string
 }
 
 type Album struct {
@@ -27,6 +29,7 @@ type Album struct {
 
 type Asset struct {
 	ID               string    `json:"id"`
+	Type             string    `json:"type"`
 	OriginalFileName string    `json:"originalFileName"`
 	FileCreatedAt    time.Time `json:"fileCreatedAt"`
 	FileModifiedAt   time.Time `json:"fileModifiedAt"`
@@ -71,6 +74,9 @@ func (a Asset) object(albumID string) *Object {
 			Ctime:    a.FileCreatedAt,
 			Mask:     model.NoRename,
 		},
-		AlbumID: albumID,
+		AlbumID:   albumID,
+		AssetType: a.Type,
 	}
 }
+
+var _ model.Thumb = (*Object)(nil)

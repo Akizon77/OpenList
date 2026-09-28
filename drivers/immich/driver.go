@@ -114,7 +114,9 @@ func (d *Immich) List(ctx context.Context, dir model.Obj, args model.ListArgs) (
 			objects = append(objects, asset.object(dir.GetID()))
 		}
 	}
-	return namedObjects(objects, dir.GetPath()), nil
+	result := namedObjects(objects, dir.GetPath())
+	d.setThumbnails(ctx, objects, args.ReqPath)
+	return result, nil
 }
 
 func (d *Immich) Link(ctx context.Context, file model.Obj, args model.LinkArgs) (*model.Link, error) {
@@ -123,6 +125,9 @@ func (d *Immich) Link(ctx context.Context, file model.Obj, args model.LinkArgs) 
 	}
 	if file.GetID() == "" {
 		return nil, errs.ObjectNotFound
+	}
+	if args.Type == "thumb" {
+		return d.thumbnailLink(ctx, file.GetID())
 	}
 	expiration := time.Minute * 5
 	return &model.Link{
